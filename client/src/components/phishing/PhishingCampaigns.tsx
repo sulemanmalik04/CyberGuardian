@@ -355,14 +355,14 @@ export default function PhishingCampaigns() {
                         <div key={dept} className="flex items-center space-x-2">
                           <Checkbox 
                             id={`dept-${dept}`}
-                            checked={formData.targetGroups.includes(dept)}
+                            checked={formData.targetGroups.includes(dept || '')}
                             onCheckedChange={(checked) => {
-                              if (checked) {
+                              if (checked && dept) {
                                 setFormData(prev => ({
                                   ...prev,
                                   targetGroups: [...prev.targetGroups.filter(g => g !== 'all'), dept]
                                 }));
-                              } else {
+                              } else if (dept) {
                                 setFormData(prev => ({
                                   ...prev,
                                   targetGroups: prev.targetGroups.filter(g => g !== dept)
