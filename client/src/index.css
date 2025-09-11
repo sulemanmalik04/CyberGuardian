@@ -1,0 +1,173 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: hsl(210, 40%, 98%);
+  --foreground: hsl(210, 40%, 15%);
+  --card: hsl(0, 0%, 100%);
+  --card-foreground: hsl(210, 40%, 15%);
+  --popover: hsl(0, 0%, 100%);
+  --popover-foreground: hsl(210, 40%, 15%);
+  --primary: hsl(217, 91%, 35%);
+  --primary-foreground: hsl(0, 0%, 100%);
+  --secondary: hsl(210, 40%, 40%);
+  --secondary-foreground: hsl(0, 0%, 100%);
+  --muted: hsl(210, 40%, 96%);
+  --muted-foreground: hsl(210, 40%, 45%);
+  --accent: hsl(24, 95%, 53%);
+  --accent-foreground: hsl(0, 0%, 100%);
+  --destructive: hsl(0, 84%, 60%);
+  --destructive-foreground: hsl(0, 0%, 100%);
+  --border: hsl(210, 40%, 85%);
+  --input: hsl(210, 40%, 90%);
+  --ring: hsl(217, 91%, 35%);
+  --chart-1: hsl(217, 91%, 35%);
+  --chart-2: hsl(24, 95%, 53%);
+  --chart-3: hsl(142, 76%, 36%);
+  --chart-4: hsl(43, 96%, 56%);
+  --chart-5: hsl(280, 65%, 60%);
+  --radius: 0.5rem;
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
+  --shadow-2xs: 0px 2px 0px 0px hsl(217, 91%, 35% / 0.00);
+  --shadow-xs: 0px 2px 0px 0px hsl(217, 91%, 35% / 0.00);
+  --shadow-sm: 0px 2px 0px 0px hsl(217, 91%, 35% / 0.00), 0px 1px 2px -1px hsl(217, 91%, 35% / 0.00);
+  --shadow: 0px 2px 0px 0px hsl(217, 91%, 35% / 0.00), 0px 1px 2px -1px hsl(217, 91%, 35% / 0.00);
+  --shadow-md: 0px 2px 0px 0px hsl(217, 91%, 35% / 0.00), 0px 2px 4px -1px hsl(217, 91%, 35% / 0.00);
+  --shadow-lg: 0px 2px 0px 0px hsl(217, 91%, 35% / 0.00), 0px 4px 6px -1px hsl(217, 91%, 35% / 0.00);
+  --shadow-xl: 0px 2px 0px 0px hsl(217, 91%, 35% / 0.00), 0px 8px 10px -1px hsl(217, 91%, 35% / 0.00);
+  --shadow-2xl: 0px 2px 0px 0px hsl(217, 91%, 35% / 0.00);
+  --spacing: 0.25rem;
+}
+
+[data-theme="dark"] {
+  --background: hsl(210, 40%, 8%);
+  --foreground: hsl(210, 40%, 95%);
+  --card: hsl(210, 40%, 12%);
+  --card-foreground: hsl(210, 40%, 95%);
+  --popover: hsl(210, 40%, 12%);
+  --popover-foreground: hsl(210, 40%, 95%);
+  --primary: hsl(217, 91%, 55%);
+  --primary-foreground: hsl(210, 40%, 8%);
+  --secondary: hsl(210, 40%, 20%);
+  --secondary-foreground: hsl(210, 40%, 95%);
+  --muted: hsl(210, 40%, 15%);
+  --muted-foreground: hsl(210, 40%, 65%);
+  --accent: hsl(24, 95%, 53%);
+  --accent-foreground: hsl(210, 40%, 8%);
+  --border: hsl(210, 40%, 20%);
+  --input: hsl(210, 40%, 18%);
+  --ring: hsl(217, 91%, 55%);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: var(--font-sans);
+  }
+}
+
+@layer utilities {
+  .chart-container {
+    width: 100%;
+    height: 300px;
+  }
+
+  .progress-bar {
+    transition: width 0.3s ease-in-out;
+  }
+
+  .phishing-email {
+    background: linear-gradient(135deg, #fee2e2 0%, #fef3c7 100%);
+    border-left: 4px solid #dc2626;
+  }
+
+  .ai-chat-bubble {
+    animation: slideIn 0.3s ease-out;
+  }
+
+  @keyframes slideIn {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .course-video-player {
+    aspect-ratio: 16/9;
+    background: #000;
+    border-radius: 8px;
+    position: relative;
+  }
+
+  .branding-preview {
+    transition: all 0.3s ease;
+  }
+
+  .mobile-responsive {
+    min-height: 100vh;
+  }
+
+  .sidebar-transition {
+    transition: transform 0.3s ease-in-out;
+  }
+
+  @media (max-width: 768px) {
+    .sidebar-mobile {
+      transform: translateX(-100%);
+    }
+    .sidebar-mobile.open {
+      transform: translateX(0);
+    }
+  }
+
+  .loading-spinner {
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .fade-in {
+    animation: fadeIn 0.5s ease-in;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .slide-up {
+    animation: slideUp 0.3s ease-out;
+  }
+
+  @keyframes slideUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
