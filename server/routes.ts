@@ -113,25 +113,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } 
       });
     } catch (error) {
-      res.status(500).json({ message: 'Login failed', error: error.message });
+      res.status(500).json({ message: 'Login failed', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
   app.post("/api/auth/logout", authenticateToken, async (req, res) => {
     try {
-      await storage.deleteSession(req.session.token);
+      const authReq = req as AuthenticatedRequest;
+      await storage.deleteSession(authReq.session.token);
       
       // Track logout event
       await storage.createAnalyticsEvent({
-        clientId: req.user.clientId,
-        userId: req.user.id,
+        clientId: authReq.user.clientId,
+        userId: authReq.user.id,
         eventType: 'logout',
         timestamp: new Date()
       });
 
       res.json({ message: 'Logged out successfully' });
     } catch (error) {
-      res.status(500).json({ message: 'Logout failed', error: error.message });
+      res.status(500).json({ message: 'Logout failed', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -139,13 +140,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/users", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
     try {
       let users;
-      if (req.user.role === 'super_admin') {
+      const authReq = req as AuthenticatedRequest;
+      if (authReq.user.role === 'super_admin') {
         // Super admin can see all users
         const clientId = req.query.clientId as string;
         users = clientId ? await storage.getUsersByClient(clientId) : [];
       } else {
         // Client admin can only see users from their client
-        users = await storage.getUsersByClient(req.user.clientId!);
+        users = await storage.getUsersByClient(authReq.user.clientId!);
       }
 
       res.json(users.map(user => ({
@@ -161,7 +163,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdAt: user.createdAt
       })));
     } catch (error) {
-      res.status(500).json({ message: 'Failed to fetch users', error: error.message });
+      res.status(500).json({ message: 'Failed to fetch users', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -173,8 +175,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const hashedPassword = await bcrypt.hash(userData.passwordHash, 12);
       
       // Set client ID for client admins
-      if (req.user.role === 'client_admin') {
-        userData.clientId = req.user.clientId;
+      const authReq = req as AuthenticatedRequest;
+      if (authReq.user.role === 'client_admin') {
+        userData.clientId = authReq.user.clientId;
       }
 
       const user = await storage.createUser({
@@ -194,7 +197,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdAt: user.createdAt
       });
     } catch (error) {
-      res.status(500).json({ message: 'Failed to create user', error: error.message });
+      res.status(500).json({ message: 'Failed to create user', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -215,7 +218,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .on('end', async () => {
           const createdUsers = [];
           
-          for (const [index, row] of results.entries()) {
+          for (const [index, row] of Array.from(results.entries())) {
             try {
               if (!row.email || !row.firstName || !row.lastName) {
                 errors.push(`Row ${index + 1}: Missing required fields (email, firstName, lastName)`);
@@ -230,14 +233,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 lastName: row.lastName,
                 passwordHash: hashedPassword,
                 role: 'end_user',
-                clientId: req.user.clientId,
+                clientId: (req as AuthenticatedRequest).user.clientId,
                 department: row.department || null,
                 language: row.language || 'en'
               });
 
               createdUsers.push(user);
             } catch (error) {
-              errors.push(`Row ${index + 1}: ${error.message}`);
+              errors.push(`Row ${index + 1}: ${error instanceof Error ? error.message : 'Unknown error'}`);
             }
           }
 
@@ -248,7 +251,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         });
     } catch (error) {
-      res.status(500).json({ message: 'CSV import failed', error: error.message });
+      res.status(500).json({ message: 'CSV import failed', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -258,7 +261,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const clients = await storage.getAllClients();
       res.json(clients);
     } catch (error) {
-      res.status(500).json({ message: 'Failed to fetch clients', error: error.message });
+      res.status(500).json({ message: 'Failed to fetch clients', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -268,7 +271,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const client = await storage.createClient(clientData);
       res.json(client);
     } catch (error) {
-      res.status(500).json({ message: 'Failed to create client', error: error.message });
+      res.status(500).json({ message: 'Failed to create client', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -277,7 +280,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       
       // Client admins can only update their own client
-      if (req.user.role === 'client_admin' && id !== req.user.clientId) {
+      const authReq = req as AuthenticatedRequest;
+      if (authReq.user.role === 'client_admin' && id !== authReq.user.clientId) {
         return res.status(403).json({ message: 'Access denied' });
       }
 
@@ -285,7 +289,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const client = await storage.updateClient(id, updates);
       res.json(client);
     } catch (error) {
-      res.status(500).json({ message: 'Failed to update client', error: error.message });
+      res.status(500).json({ message: 'Failed to update client', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -296,7 +300,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const courses = await storage.getCoursesByLanguage(language);
       res.json(courses);
     } catch (error) {
-      res.status(500).json({ message: 'Failed to fetch courses', error: error.message });
+      res.status(500).json({ message: 'Failed to fetch courses', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -305,7 +309,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const courses = await storage.getPublishedCourses();
       res.json(courses);
     } catch (error) {
-      res.status(500).json({ message: 'Failed to fetch published courses', error: error.message });
+      res.status(500).json({ message: 'Failed to fetch published courses', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -314,11 +318,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const courseData = insertCourseSchema.parse(req.body);
       const course = await storage.createCourse({
         ...courseData,
-        createdBy: req.user.id
+        createdBy: (req as AuthenticatedRequest).user.id
       });
       res.json(course);
     } catch (error) {
-      res.status(500).json({ message: 'Failed to create course', error: error.message });
+      res.status(500).json({ message: 'Failed to create course', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -335,12 +339,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         difficulty,
         estimatedDuration: generatedCourse.estimatedDuration,
         status: 'draft',
-        createdBy: req.user.id
+        createdBy: (req as AuthenticatedRequest).user.id
       });
 
       res.json(course);
     } catch (error) {
-      res.status(500).json({ message: 'Failed to generate course', error: error.message });
+      res.status(500).json({ message: 'Failed to generate course', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -350,14 +354,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { userId } = req.params;
       
       // Users can only see their own progress, admins can see any
-      if (req.user.role === 'end_user' && userId !== req.user.id) {
+      const authReq = req as AuthenticatedRequest;
+      if (authReq.user.role === 'end_user' && userId !== authReq.user.id) {
         return res.status(403).json({ message: 'Access denied' });
       }
 
       const progress = await storage.getUserProgressByUser(userId);
       res.json(progress);
     } catch (error) {
-      res.status(500).json({ message: 'Failed to fetch progress', error: error.message });
+      res.status(500).json({ message: 'Failed to fetch progress', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -367,7 +372,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updates = req.body;
 
       // Users can only update their own progress
-      if (req.user.role === 'end_user' && userId !== req.user.id) {
+      const authReq = req as AuthenticatedRequest;
+      if (authReq.user.role === 'end_user' && userId !== authReq.user.id) {
         return res.status(403).json({ message: 'Access denied' });
       }
 
@@ -382,6 +388,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           currentModule: 0,
           quizScores: {},
           isCompleted: false,
+          completedAt: null,
           startedAt: new Date(),
           lastAccessedAt: new Date()
         });
@@ -392,7 +399,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Track course events
       if (updates.isCompleted && !progress.isCompleted) {
         await storage.createAnalyticsEvent({
-          clientId: req.user.clientId,
+          clientId: authReq.user.clientId,
           userId,
           courseId,
           eventType: 'course_completed',
@@ -402,7 +409,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(updatedProgress);
     } catch (error) {
-      res.status(500).json({ message: 'Failed to update progress', error: error.message });
+      res.status(500).json({ message: 'Failed to update progress', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -410,15 +417,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/campaigns", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
     try {
       let campaigns;
-      if (req.user.role === 'super_admin') {
+      const authReq = req as AuthenticatedRequest;
+      if (authReq.user.role === 'super_admin') {
         const clientId = req.query.clientId as string;
         campaigns = clientId ? await storage.getCampaignsByClient(clientId) : [];
       } else {
-        campaigns = await storage.getCampaignsByClient(req.user.clientId!);
+        campaigns = await storage.getCampaignsByClient(authReq.user.clientId!);
       }
       res.json(campaigns);
     } catch (error) {
-      res.status(500).json({ message: 'Failed to fetch campaigns', error: error.message });
+      res.status(500).json({ message: 'Failed to fetch campaigns', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -426,18 +434,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const campaignData = insertPhishingCampaignSchema.parse(req.body);
       
-      if (req.user.role === 'client_admin') {
-        campaignData.clientId = req.user.clientId;
+      const authReq = req as AuthenticatedRequest;
+      if (authReq.user.role === 'client_admin') {
+        campaignData.clientId = authReq.user.clientId!;
       }
 
       const campaign = await storage.createCampaign({
         ...campaignData,
-        createdBy: req.user.id
+        createdBy: (req as AuthenticatedRequest).user.id
       });
 
       res.json(campaign);
     } catch (error) {
-      res.status(500).json({ message: 'Failed to create campaign', error: error.message });
+      res.status(500).json({ message: 'Failed to create campaign', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -464,7 +473,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ success: true, emailsSent: emailResults.sent });
     } catch (error) {
-      res.status(500).json({ message: 'Failed to launch campaign', error: error.message });
+      res.status(500).json({ message: 'Failed to launch campaign', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -529,7 +538,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { startDate, endDate } = req.query;
       let events;
 
-      if (req.user.role === 'super_admin') {
+      const authReq = req as AuthenticatedRequest;
+      if (authReq.user.role === 'super_admin') {
         const clientId = req.query.clientId as string;
         if (clientId) {
           events = await storage.getAnalyticsEventsByClient(
@@ -538,9 +548,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             endDate ? new Date(endDate as string) : undefined
           );
         }
-      } else if (req.user.clientId) {
+      } else if (authReq.user.clientId) {
         events = await storage.getAnalyticsEventsByClient(
-          req.user.clientId,
+          authReq.user.clientId,
           startDate ? new Date(startDate as string) : undefined,
           endDate ? new Date(endDate as string) : undefined
         );
@@ -548,7 +558,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(events || []);
     } catch (error) {
-      res.status(500).json({ message: 'Failed to fetch analytics', error: error.message });
+      res.status(500).json({ message: 'Failed to fetch analytics', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -557,22 +567,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { message, context } = req.body;
       
-      const response = await openaiService.chatWithUser(message, req.user, context);
+      const authReq = req as AuthenticatedRequest;
+      const response = await openaiService.chatWithUser(message, authReq.user, context);
       
       res.json({ response });
     } catch (error) {
-      res.status(500).json({ message: 'AI chat failed', error: error.message });
+      res.status(500).json({ message: 'AI chat failed', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
   app.post("/api/ai/recommendations", authenticateToken, async (req, res) => {
     try {
-      const userProgress = await storage.getUserProgressByUser(req.user.id);
-      const recommendations = await openaiService.generateLearningRecommendations(req.user, userProgress);
+      const authReq = req as AuthenticatedRequest;
+      const userProgress = await storage.getUserProgressByUser(authReq.user.id);
+      const recommendations = await openaiService.generateLearningRecommendations(authReq.user, userProgress);
       
       res.json(recommendations);
     } catch (error) {
-      res.status(500).json({ message: 'Failed to generate recommendations', error: error.message });
+      res.status(500).json({ message: 'Failed to generate recommendations', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -586,10 +598,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const logoUrl = await s3Service.uploadFile(req.file, 'logos');
       
       // Update client branding
-      if (req.user.clientId) {
-        const client = await storage.getClient(req.user.clientId);
+      const authReq = req as AuthenticatedRequest;
+      if (authReq.user.clientId) {
+        const client = await storage.getClient(authReq.user.clientId);
         if (client) {
-          await storage.updateClient(req.user.clientId, {
+          await storage.updateClient(authReq.user.clientId, {
             branding: {
               ...client.branding,
               logo: logoUrl
@@ -600,7 +613,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ logoUrl });
     } catch (error) {
-      res.status(500).json({ message: 'Logo upload failed', error: error.message });
+      res.status(500).json({ message: 'Logo upload failed', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
