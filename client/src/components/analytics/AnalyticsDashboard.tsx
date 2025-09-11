@@ -128,6 +128,35 @@ export default function AnalyticsDashboard() {
     return new Set(recentEvents.map(e => e.userId)).size;
   }
 
+  // Time series data for charts
+  const chartData = getTimeSeriesData();
+
+  function getTimeSeriesData() {
+    const days = [];
+    const startTime = new Date(rangeStart);
+    const endTime = new Date(rangeEnd);
+    
+    for (let d = new Date(startTime); d <= endTime; d.setDate(d.getDate() + 1)) {
+      const dayStart = startOfDay(d).getTime();
+      const dayEnd = endOfDay(d).getTime();
+      
+      const dayEvents = analyticsEvents.filter(e => {
+        const eventTime = new Date(e.timestamp).getTime();
+        return eventTime >= dayStart && eventTime <= dayEnd;
+      });
+      
+      days.push({
+        date: format(d, 'MMM dd'),
+        coursesCompleted: dayEvents.filter(e => e.eventType === 'course_completed').length,
+        phishingClicks: dayEvents.filter(e => e.eventType === 'email_clicked').length,
+        quizzesCompleted: dayEvents.filter(e => e.eventType === 'quiz_completed').length,
+        emailsOpened: dayEvents.filter(e => e.eventType === 'email_opened').length
+      });
+    }
+    
+    return days;
+  }
+
   // User performance data
   const userPerformance = users.map(user => {
     const userEvents = analyticsEvents.filter(e => e.userId === user.id);
