@@ -35,7 +35,8 @@ class S3Service {
       const result = await s3.upload(uploadParams).promise();
       return result.Location;
     } catch (error) {
-      throw new Error(`S3 upload failed: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`S3 upload failed: ${errorMessage}`);
     }
   }
 
@@ -70,7 +71,8 @@ class S3Service {
       const result = await s3.upload(uploadParams).promise();
       return result.Location;
     } catch (error) {
-      throw new Error(`Logo upload failed: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Logo upload failed: ${errorMessage}`);
     }
   }
 
@@ -112,7 +114,8 @@ class S3Service {
       const result = await s3.upload(uploadParams).promise();
       return result.Location;
     } catch (error) {
-      throw new Error(`Course content upload failed: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Course content upload failed: ${errorMessage}`);
     }
   }
 
@@ -126,7 +129,8 @@ class S3Service {
 
       return s3.getSignedUrl('getObject', params);
     } catch (error) {
-      throw new Error(`Presigned URL generation failed: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Presigned URL generation failed: ${errorMessage}`);
     }
   }
 
@@ -139,7 +143,8 @@ class S3Service {
 
       await s3.deleteObject(params).promise();
     } catch (error) {
-      throw new Error(`File deletion failed: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`File deletion failed: ${errorMessage}`);
     }
   }
 
@@ -153,7 +158,8 @@ class S3Service {
       const result = await s3.listObjectsV2(params).promise();
       return result.Contents?.map(obj => obj.Key!) || [];
     } catch (error) {
-      throw new Error(`File listing failed: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`File listing failed: ${errorMessage}`);
     }
   }
 
@@ -169,7 +175,8 @@ class S3Service {
       const result = await s3.copyObject(copyParams).promise();
       return `https://${BUCKET_NAME}.s3.amazonaws.com/${destKey}`;
     } catch (error) {
-      throw new Error(`File copy failed: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`File copy failed: ${errorMessage}`);
     }
   }
 }

@@ -37,7 +37,7 @@ class SendGridService {
         to: params.to,
         from: params.from,
         subject: params.subject,
-        text: params.text,
+        text: params.text || '',
         html: params.html,
         trackingSettings: params.trackingSettings || {
           clickTracking: { enable: true },
@@ -62,9 +62,9 @@ class SendGridService {
     let recipients = targetUsers;
     if (campaign.targetGroups && campaign.targetGroups.length > 0) {
       recipients = targetUsers.filter(user => 
-        campaign.targetGroups.includes(user.department || '') ||
-        campaign.targetGroups.includes(user.role) ||
-        campaign.targetGroups.includes('all')
+        campaign.targetGroups!.includes(user.department || '') ||
+        campaign.targetGroups!.includes(user.role) ||
+        campaign.targetGroups!.includes('all')
       );
     }
 
@@ -130,7 +130,8 @@ class SendGridService {
 
       } catch (error) {
         result.failed++;
-        result.errors.push(`Error sending to ${user.email}: ${error.message}`);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        result.errors.push(`Error sending to ${user.email}: ${errorMessage}`);
       }
     }
 

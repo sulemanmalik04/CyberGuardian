@@ -20,7 +20,8 @@ import {
   Download,
   Calendar,
   Clock,
-  Rocket
+  Rocket,
+  Edit
 } from 'lucide-react';
 import { api, type PhishingCampaign, type User } from '@/lib/api';
 
@@ -194,7 +195,7 @@ export default function PhishingCampaigns() {
   };
 
   const getDepartments = () => {
-    const departments = [...new Set(users.map(u => u.department).filter(Boolean))];
+    const departments = Array.from(new Set(users.map(u => u.department).filter(Boolean)));
     return departments;
   };
 
