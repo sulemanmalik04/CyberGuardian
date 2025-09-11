@@ -1,0 +1,271 @@
+{
+  "project_overview": {
+    "name": "Multi-Tenant Cybersecurity Awareness Training Platform",
+    "description": "Build a complete white-labeled cybersecurity training platform with phishing simulation, AI-powered learning, and multi-tenant architecture",
+    "tech_stack": {
+      "frontend": "React + Next.js (SSG + SSR support)",
+      "backend": "Node.js with Next.js API routes",
+      "authentication": "JWT for client-specific login systems",
+      "database": "MongoDB (MongoDB Atlas) for relational data (users, sessions) + Redis for caching",
+      "storage": "AWS S3 Storage for logos and templates",
+      "email": "SendGrid for email delivery & tracking",
+      "ai_services": "OpenAI for course customization and chatbot"
+    },
+    "api_keys": {
+      "openai": "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",
+      "sendgrid": "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"
+    }
+  },
+  "user_roles": [
+    {
+      "role": "Super Admin",
+      "permissions": [
+        "Create and manage client accounts",
+        "Set client session expiration dates",
+        "Manage system-wide settings",
+        "View platform-wide analytics",
+        "Control licensing and renewals"
+      ]
+    },
+    {
+      "role": "Client Admin",
+      "permissions": [
+        "Manage users under their company",
+        "Customize branding (logo, theme, colors)",
+        "Create and run phishing campaigns",
+        "Assign courses and review progress",
+        "View client-specific reports and analytics",
+        "Import users via CSV or Azure AD"
+      ]
+    },
+    {
+      "role": "End User",
+      "permissions": [
+        "Complete training courses and modules",
+        "Take quizzes (manual and AI-generated)",
+        "Receive phishing simulations via real email",
+        "Get personalized feedback and recommendations",
+        "Chat with AI assistant for help and suggestions"
+      ]
+    }
+  ],
+  "core_requirements": {
+    "1_client_session_management": {
+      "description": "Super admin creates new client platform sessions",
+      "features": [
+        "Create new client sessions with unique branded portals",
+        "Set usage expiration dates for each client",
+        "Assign client admin credentials",
+        "Upload custom branding (logo, colors, theme)",
+        "Manage client licensing status"
+      ],
+      "implementation": "MongoDB collections for clients, sessions, and branding configs"
+    },
+    "2_authentication_system": {
+      "description": "Role-based authentication with client-specific branding",
+      "features": [
+        "JWT-based authentication system",
+        "Email/password login",
+        "Google/Microsoft SSO integration",
+        "Client-specific branded login pages",
+        "Role-based route protection",
+        "Session management with expiration"
+      ],
+      "implementation": "JWT tokens, Next.js middleware for route protection, dynamic branding system"
+    },
+    "3_user_management": {
+      "description": "Client admin manages users and assignments",
+      "features": [
+        "Import users via CSV upload with validation",
+        "Azure AD/Active Directory integration",
+        "User role assignment (user, group)",
+        "Track user status (active, completed training)",
+        "Multi-language content assignment per user",
+        "User progress tracking"
+      ],
+      "implementation": "CSV parsing, Azure AD API integration, user management dashboard"
+    },
+    "4_course_delivery_system": {
+      "description": "Interactive learning platform with AI enhancement",
+      "features": [
+        "Course browsing and enrollment system",
+        "Video streaming and interactive lessons",
+        "Quiz system (manual and AI-generated)",
+        "Visual progress tracking for users",
+        "Course assignment by admin",
+        "Completion statistics and reporting",
+        "AI-powered learning path suggestions",
+        "Different learning module types including games",
+        "User-selectable learning preferences"
+      ],
+      "implementation": "Video streaming, quiz engine, progress tracking, OpenAI integration for content generation"
+    },
+    "5_phishing_simulation_engine": {
+      "description": "Real-world email phishing simulation with tracking",
+      "features": [
+        "Multiple phishing domain options for campaigns",
+        "Pre-built email templates library",
+        "WYSIWYG template editor for custom emails",
+        "User/group targeting system",
+        "Campaign scheduling functionality",
+        "Real email delivery via SendGrid",
+        "Email tracking: opens (pixel tracking), clicks (redirect tracking), ignored",
+        "Optional 'Report as phishing' functionality",
+        "Analytics data storage in analytics_events table",
+        "Edge function for tracking GIF delivery"
+      ],
+      "implementation": "SendGrid integration, tracking pixels, redirect URLs, campaign management system"
+    },
+    "6_analytics_reporting": {
+      "description": "Comprehensive reporting and analytics dashboard",
+      "features": [
+        "Phishing campaign results (opened, clicked, failed/passed)",
+        "Time-based interaction tracking",
+        "Filtering by campaign, user group, date range",
+        "Export functionality (CSV, PDF)",
+        "Interactive graphs for training progress, quiz performance, campaign metrics",
+        "Client-specific and platform-wide analytics"
+      ],
+      "implementation": "Chart.js/D3.js for visualizations, export libraries, filtering system"
+    },
+    "7_ai_assistant": {
+      "description": "OpenAI-powered chatbot for users and admins",
+      "features": [
+        "User assistance: 'Recommend training for phishing awareness'",
+        "Admin assistance: 'Generate 5 quiz questions from this course'",
+        "Course customization suggestions",
+        "Integrated chat UI component in dashboard",
+        "Context-aware responses based on user role and progress"
+      ],
+      "implementation": "OpenAI API integration, chat interface, role-based AI responses"
+    },
+    "8_storage_integration": {
+      "description": "File storage for branding and content",
+      "features": [
+        "Client branding logo storage",
+        "Course files (videos, PDFs) storage",
+        "Email template storage",
+        "Secure file access with expiring URLs"
+      ],
+      "implementation": "AWS S3 integration with proper access controls"
+    },
+    "9_multi_language_support": {
+      "description": "Platform content in multiple languages",
+      "features": [
+        "Multi-language content support",
+        "Admin assignment of language per user/group",
+        "Language-specific course content",
+        "Localized UI elements"
+      ],
+      "implementation": "i18n implementation, language detection, content localization"
+    },
+    "10_licensing_subscription": {
+      "description": "Client session licensing and subscription management",
+      "features": [
+        "Client session expiration dates",
+        "Licensing status tracking",
+        "Super admin renewal/extension controls",
+        "Usage limits enforcement"
+      ],
+      "implementation": "Licensing logic, expiration checks, usage monitoring"
+    }
+  },
+  "database_schema": {
+    "collections": [
+      {
+        "name": "clients",
+        "fields": ["clientId", "name", "branding", "expirationDate", "licensingStatus", "createdAt"]
+      },
+      {
+        "name": "users",
+        "fields": ["userId", "clientId", "email", "role", "language", "status", "progress", "createdAt"]
+      },
+      {
+        "name": "courses",
+        "fields": ["courseId", "title", "content", "language", "type", "difficulty", "createdAt"]
+      },
+      {
+        "name": "analytics_events",
+        "fields": ["eventId", "clientId", "userId", "campaignId", "eventType", "timestamp", "metadata"]
+      },
+      {
+        "name": "phishing_campaigns",
+        "fields": ["campaignId", "clientId", "name", "template", "targets", "scheduledAt", "status"]
+      },
+      {
+        "name": "sessions",
+        "fields": ["sessionId", "clientId", "adminUserId", "settings", "createdAt", "expiresAt"]
+      }
+    ]
+  },
+  "user_flows": {
+    "super_admin": [
+      "Login to main platform",
+      "Create client session (logo, expiration, admin email)",
+      "Manage global analytics",
+      "Add/remove clients",
+      "Control licensing and renewals"
+    ],
+    "client_admin": [
+      "Login to branded portal",
+      "Import users via CSV or Azure AD",
+      "Launch phishing campaigns with domain selection",
+      "Create/customize phishing templates via WYSIWYG",
+      "Assign training courses",
+      "View campaign results and training reports",
+      "Customize branding and portal appearance"
+    ],
+    "end_user": [
+      "Login via company portal",
+      "Select preferred learning modules",
+      "Complete assigned training courses",
+      "Take AI-generated quizzes",
+      "Receive simulated phishing emails",
+      "Get personalized feedback",
+      "Chat with AI assistant for recommendations"
+    ]
+  },
+  "technical_implementation": {
+    "project_structure": [
+      "/pages - Next.js pages and API routes",
+      "/components - Reusable React components",
+      "/lib - Utility functions and configurations",
+      "/models - MongoDB schemas",
+      "/middleware - Authentication and role checking",
+      "/public - Static assets",
+      "/styles - CSS and styling files"
+    ],
+    "key_files": [
+      "next.config.js - Next.js configuration",
+      "package.json - Dependencies",
+      ".env.local - Environment variables",
+      "/pages/api/auth - Authentication endpoints",
+      "/pages/api/clients - Client management",
+      "/pages/api/campaigns - Phishing campaigns",
+      "/pages/api/courses - Course management",
+      "/pages/api/analytics - Reporting endpoints"
+    ]
+  },
+  "development_priorities": [
+    "1. Set up Next.js project with MongoDB connection",
+    "2. Implement authentication system with JWT",
+    "3. Create client session management for Super Admin",
+    "4. Build user management with CSV/Azure AD import",
+    "5. Develop course delivery system with progress tracking",
+    "6. Implement phishing simulation engine with SendGrid",
+    "7. Create analytics and reporting dashboard",
+    "8. Integrate OpenAI for AI assistant and quiz generation",
+    "9. Add multi-language support",
+    "10. Implement licensing and subscription logic"
+  ],
+  "special_features": [
+    "Fully white-labeled per client with custom branding",
+    "Real-world email phishing tracking (not in-app)",
+    "AI-enhanced learning experience with course customization",
+    "Multi-tenant architecture with license expiration",
+    "Multiple phishing domains for campaign variety",
+    "WYSIWYG email template editor",
+    "Game-based learning modules",
+    "User-selectable learning preferences"
+  ]
+}
