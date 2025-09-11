@@ -122,7 +122,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createClient(client: InsertClient): Promise<Client> {
-    const [newClient] = await db.insert(clients).values(client).returning();
+    const [newClient] = await db.insert(clients).values([client]).returning();
     return newClient;
   }
 
@@ -146,7 +146,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createCourse(course: InsertCourse): Promise<Course> {
-    const [newCourse] = await db.insert(courses).values(course).returning();
+    const [newCourse] = await db.insert(courses).values([course]).returning();
     return newCourse;
   }
 
@@ -236,31 +236,37 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAnalyticsEventsByClient(clientId: string, startDate?: Date, endDate?: Date): Promise<AnalyticsEvent[]> {
-    let query = db.select().from(analyticsEvents).where(eq(analyticsEvents.clientId, clientId));
+    let conditions = [eq(analyticsEvents.clientId, clientId)];
     
     if (startDate && endDate) {
-      query = query.where(and(
-        eq(analyticsEvents.clientId, clientId),
+      conditions.push(
         gte(analyticsEvents.timestamp, startDate),
         lte(analyticsEvents.timestamp, endDate)
-      ));
+      );
     }
     
-    return await query.orderBy(desc(analyticsEvents.timestamp));
+    return await db
+      .select()
+      .from(analyticsEvents)
+      .where(and(...conditions))
+      .orderBy(desc(analyticsEvents.timestamp));
   }
 
   async getAnalyticsEventsByUser(userId: string, startDate?: Date, endDate?: Date): Promise<AnalyticsEvent[]> {
-    let query = db.select().from(analyticsEvents).where(eq(analyticsEvents.userId, userId));
+    let conditions = [eq(analyticsEvents.userId, userId)];
     
     if (startDate && endDate) {
-      query = query.where(and(
-        eq(analyticsEvents.userId, userId),
+      conditions.push(
         gte(analyticsEvents.timestamp, startDate),
         lte(analyticsEvents.timestamp, endDate)
-      ));
+      );
     }
     
-    return await query.orderBy(desc(analyticsEvents.timestamp));
+    return await db
+      .select()
+      .from(analyticsEvents)
+      .where(and(...conditions))
+      .orderBy(desc(analyticsEvents.timestamp));
   }
 
   async getCampaignAnalytics(campaignId: string): Promise<AnalyticsEvent[]> {

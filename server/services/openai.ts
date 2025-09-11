@@ -80,10 +80,15 @@ class OpenAIService {
         max_tokens: 4000
       });
 
-      const courseData = JSON.parse(response.choices[0].message.content);
+      const content = response.choices[0].message.content;
+      if (!content) {
+        throw new Error('No content received from OpenAI');
+      }
+      const courseData = JSON.parse(content);
       return courseData;
     } catch (error) {
-      throw new Error(`Course generation failed: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Course generation failed: ${errorMessage}`);
     }
   }
 
@@ -123,10 +128,15 @@ class OpenAIService {
         response_format: { type: "json_object" }
       });
 
-      const quizData = JSON.parse(response.choices[0].message.content);
+      const content = response.choices[0].message.content;
+      if (!content) {
+        throw new Error('No content received from OpenAI');
+      }
+      const quizData = JSON.parse(content);
       return quizData.questions;
     } catch (error) {
-      throw new Error(`Quiz generation failed: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Quiz generation failed: ${errorMessage}`);
     }
   }
 
@@ -169,9 +179,11 @@ class OpenAIService {
         max_tokens: 500
       });
 
-      return response.choices[0].message.content;
+      const content = response.choices[0].message.content;
+      return content || 'I apologize, but I couldn\'t generate a response. Please try again.';
     } catch (error) {
-      throw new Error(`AI chat failed: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`AI chat failed: ${errorMessage}`);
     }
   }
 
@@ -223,10 +235,15 @@ class OpenAIService {
         response_format: { type: "json_object" }
       });
 
-      const recommendationsData = JSON.parse(response.choices[0].message.content);
+      const content = response.choices[0].message.content;
+      if (!content) {
+        throw new Error('No content received from OpenAI');
+      }
+      const recommendationsData = JSON.parse(content);
       return recommendationsData.recommendations;
     } catch (error) {
-      throw new Error(`Recommendation generation failed: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Recommendation generation failed: ${errorMessage}`);
     }
   }
 
@@ -269,10 +286,15 @@ class OpenAIService {
         response_format: { type: "json_object" }
       });
 
-      const emailData = JSON.parse(response.choices[0].message.content);
+      const content = response.choices[0].message.content;
+      if (!content) {
+        throw new Error('No content received from OpenAI');
+      }
+      const emailData = JSON.parse(content);
       return emailData;
     } catch (error) {
-      throw new Error(`Phishing email generation failed: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Phishing email generation failed: ${errorMessage}`);
     }
   }
 }
