@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { authService } from "./services/auth";
@@ -7,6 +7,7 @@ import { sendgridService } from "./services/sendgrid";
 import { s3Service } from "./services/s3";
 import { z } from "zod";
 import { insertUserSchema, insertClientSchema, insertCourseSchema, insertPhishingCampaignSchema } from "@shared/schema";
+import type { AuthenticatedRequest, UploadRequest, AuthenticatedUploadRequest } from "./types";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import multer from "multer";
@@ -17,7 +18,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
-  const authenticateToken = async (req: any, res: any, next: any) => {
+  const authenticateToken = async (req: Request, res: Response, next: NextFunction) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
 
@@ -36,17 +37,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'User not found' });
       }
 
-      req.user = user;
-      req.session = session;
+      (req as AuthenticatedRequest).user = user;
+      (req as AuthenticatedRequest).session = session;
       next();
     } catch (error) {
+      console.error('Authentication error:', error);
       return res.status(403).json({ message: 'Invalid token' });
     }
   };
 
   // Role-based access control
-  const requireRole = (roles: string[]) => (req: any, res: any, next: any) => {
-    if (!req.user || !roles.includes(req.user.role)) {
+  const requireRole = (roles: string[]) => (req: Request, res: Response, next: NextFunction) => {
+    const authReq = req as AuthenticatedRequest;
+    if (!authReq.user || !roles.includes(authReq.user.role)) {
       return res.status(403).json({ message: 'Insufficient permissions' });
     }
     next();
