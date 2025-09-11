@@ -55,6 +55,114 @@ export async function registerRoutes(app: Express): Promise<Server> {
     next();
   };
 
+  // Email tracking routes (before authentication routes to avoid middleware)
+  app.get("/api/tracking/open/:trackingId", async (req, res) => {
+    try {
+      const { trackingId } = req.params;
+      
+      // Log email open event
+      await storage.createAnalyticsEvent({
+        eventType: 'email_opened',
+        metadata: {
+          trackingId: trackingId,
+          userAgent: req.headers['user-agent'],
+          timestamp: new Date()
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        timestamp: new Date()
+      });
+
+      // Return 1x1 transparent pixel
+      const pixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+      res.setHeader('Content-Type', 'image/gif');
+      res.setHeader('Content-Length', pixel.length);
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.end(pixel);
+    } catch (error) {
+      console.error('Tracking open error:', error);
+      res.status(200).end(); // Still return success to avoid breaking email display
+    }
+  });
+
+  app.get("/api/tracking/click/:trackingId", async (req, res) => {
+    try {
+      const { trackingId } = req.params;
+      const { redirect } = req.query;
+      
+      // Log email click event
+      await storage.createAnalyticsEvent({
+        eventType: 'email_clicked',
+        metadata: {
+          trackingId: trackingId,
+          redirectUrl: redirect,
+          userAgent: req.headers['user-agent'],
+          timestamp: new Date()
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        timestamp: new Date()
+      });
+
+      // Redirect to the intended URL or show phishing awareness page
+      if (redirect && typeof redirect === 'string') {
+        res.redirect(redirect);
+      } else {
+        // Show phishing awareness page
+        res.redirect('/phishing-awareness');
+      }
+    } catch (error) {
+      console.error('Tracking click error:', error);
+      res.redirect('/error');
+    }
+  });
+
+  // SendGrid webhook for email events
+  app.post("/api/webhooks/sendgrid", async (req, res) => {
+    try {
+      const events = Array.isArray(req.body) ? req.body : [req.body];
+      
+      for (const event of events) {
+        let eventType: string;
+        
+        switch (event.event) {
+          case 'delivered':
+            eventType = 'email_sent';
+            break;
+          case 'open':
+            eventType = 'email_opened';
+            break;
+          case 'click':
+            eventType = 'email_clicked';
+            break;
+          default:
+            continue;
+        }
+        
+        await storage.createAnalyticsEvent({
+          eventType: eventType as any,
+          metadata: {
+            email: event.email,
+            campaignId: event.unique_arg_campaign_id,
+            userId: event.unique_arg_user_id,
+            timestamp: event.timestamp,
+            userAgent: event.useragent,
+            ip: event.ip,
+            url: event.url
+          },
+          ipAddress: event.ip,
+          userAgent: event.useragent,
+          timestamp: new Date(event.timestamp * 1000)
+        });
+      }
+      
+      res.status(200).json({ message: 'Webhook processed' });
+    } catch (error) {
+      console.error('SendGrid webhook error:', error);
+      res.status(500).json({ error: 'Webhook processing failed' });
+    }
+  });
+
   // Authentication routes
   app.post("/api/auth/login", async (req, res) => {
     try {
