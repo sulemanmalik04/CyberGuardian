@@ -305,16 +305,19 @@ export default function CourseDelivery() {
         /* Course Player Interface */
         <Card>
           <CardContent className="p-0">
-            {/* Video Player Area */}
-            <div className="course-video-player">
-              <div className="absolute inset-0 flex items-center justify-center bg-black/80">
-                <div className="text-center text-white">
-                  <Play className="w-16 h-16 mx-auto mb-4 opacity-80" />
-                  <p className="text-lg mb-2">Video Player Area</p>
-                  <p className="text-sm opacity-80">
-                    Module {currentModule + 1}: {selectedCourse.content.modules[currentModule]?.title}
-                  </p>
-                </div>
+            {/* Module Content Area */}
+            <div className="bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-blue-950 dark:to-indigo-900 p-8 min-h-[400px]">
+              <div className="max-w-4xl mx-auto">
+                <h2 className="text-2xl font-bold mb-4" data-testid="module-title">
+                  {selectedCourse.content.modules[currentModule]?.title}
+                </h2>
+                <div 
+                  className="prose dark:prose-invert max-w-none bg-white dark:bg-gray-800 p-6 rounded-lg shadow-sm"
+                  dangerouslySetInnerHTML={{ 
+                    __html: selectedCourse.content.modules[currentModule]?.content || 'Loading content...'
+                  }}
+                  data-testid="module-content"
+                />
               </div>
             </div>
             
