@@ -54,6 +54,7 @@ export const clients = pgTable("clients", {
 // Courses table
 export const courses = pgTable("courses", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: uuid("client_id").references(() => clients.id), // SECURITY: Tenant isolation - courses are client-specific
   title: text("title").notNull(),
   description: text("description"),
   content: jsonb("content").$type<{

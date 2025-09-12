@@ -15,6 +15,14 @@ import csvParser from "csv-parser";
 import { Readable } from "stream";
 import crypto from "crypto";
 import { verify } from "@noble/ed25519";
+// SECURITY: Import comprehensive tenant security utilities
+import { 
+  tenantMiddleware, 
+  TenantQueryHelper, 
+  validateUserCreation, 
+  validateRequestBody, 
+  logTenantAccess 
+} from "./tenant-security";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -614,30 +622,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.warn(`Could not fetch campaign/user details for event: ${error}`);
           }
           
-          await storage.createAnalyticsEvent({
-            clientId: clientId || (user ? user.clientId : null),
-            userId: userId,
-            eventType: eventType as any,
-            metadata: {
-              email: event.email,
-              campaignId: campaignId,
+          // SECURITY: Enhanced tenant isolation for SendGrid webhook events
+          // Only create analytics event if we can properly validate tenant relationship
+          if (user && user.clientId) {
+            // SECURITY: Validate campaign belongs to user's client if campaign exists
+            if (campaign && campaign.clientId !== user.clientId) {
+              console.error(`🚨 SECURITY VIOLATION: User ${userId} (client: ${user.clientId}) does not belong to campaign ${campaignId} (client: ${campaign.clientId})`);
+              continue; // Skip this event due to tenant mismatch
+            }
+
+            await storage.createAnalyticsEvent({
+              clientId: user.clientId, // SECURITY: Always use user's validated clientId
               userId: userId,
-              clientId: clientId,
-              campaignName: campaign ? campaign.name : undefined,
-              userEmail: user ? user.email : event.email,
-              sendgridEventId: event.sg_event_id,
-              sendgridMessageId: event.sg_message_id,
-              timestamp: event.timestamp,
+              campaignId: campaignId || null,
+              eventType: eventType as any,
+              metadata: {
+                email: event.email,
+                campaignId: campaignId,
+                userId: userId,
+                validatedClientId: user.clientId, // SECURITY: Mark as validated
+                campaignName: campaign ? campaign.name : undefined,
+                userEmail: user.email,
+                sendgridEventId: event.sg_event_id,
+                sendgridMessageId: event.sg_message_id,
+                timestamp: event.timestamp,
+                userAgent: event.useragent,
+                ip: event.ip,
+                url: event.url,
+                reason: event.reason,
+                status: event.status
+              },
+              ipAddress: event.ip,
               userAgent: event.useragent,
-              ip: event.ip,
-              url: event.url,
-              reason: event.reason,
-              status: event.status
-            },
-            ipAddress: event.ip,
-            userAgent: event.useragent,
-            timestamp: new Date(event.timestamp * 1000)
-          });
+              timestamp: new Date(event.timestamp * 1000)
+            });
+          } else {
+            console.warn(`⚠️ SendGrid Event: Skipping event due to missing user or clientId. User: ${userId}, UserClientId: ${user?.clientId}`);
+            continue; // Skip events without proper tenant context
+          }
 
           processedCount++;
           console.log(`📨 SendGrid event processed: ${eventType} for ${event.email}`);
@@ -701,8 +723,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         timestamp: new Date()
       });
 
-      // Update last login
-      await storage.updateUser(user.id, { lastLoginAt: new Date() });
+      // SECURITY: Update last login using tenant-safe method
+      // Note: We can safely use tenant validation here since we know user.clientId
+      if (user.clientId) {
+        await storage.updateUserWithClientValidation(user.id, { lastLoginAt: new Date() }, user.clientId);
+      } else {
+        // Super admin case - they may not have a clientId
+        console.warn(`🔍 AUDIT: Super admin login for user ${user.email} - no clientId for lastLoginAt update`);
+      }
 
       res.json({ 
         token, 
@@ -739,18 +767,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // User management routes
-  app.get("/api/users", authenticateAdmin, async (req, res) => {
+  // User management routes - SECURITY: Now tenant-scoped with comprehensive validation
+  app.get("/api/users", authenticateAdmin, tenantMiddleware.allowSuperAdminWildcard(), async (req, res) => {
     try {
-      let users;
       const authReq = req as AuthenticatedRequest;
-      if (authReq.user.role === 'super_admin') {
-        // Super admin can see all users
-        const clientId = req.query.clientId as string;
-        users = clientId ? await storage.getUsersByClient(clientId) : [];
-      } else {
-        // Client admin can only see users from their client
-        users = await storage.getUsersByClient(authReq.user.clientId!);
+      const queryHelper = new TenantQueryHelper(authReq.tenantContext!);
+      
+      // SECURITY: Use tenant query helper for safe user access
+      const requestedClientId = req.query.clientId as string;
+      const users = await queryHelper.getUsers(requestedClientId);
+      
+      const clientId = requestedClientId || authReq.user.clientId;
+      if (clientId) {
+        logTenantAccess(authReq.user.id, 'read', 'users', 'list', clientId);
       }
 
       res.json(users.map(user => ({
@@ -770,22 +799,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/users", authenticateAdmin, async (req, res) => {
+  app.post("/api/users", authenticateAdmin, tenantMiddleware.requireClientId(), async (req, res) => {
     try {
+      const authReq = req as AuthenticatedRequest;
       const userData = insertUserSchema.parse(req.body);
       
-      // Hash password
-      const hashedPassword = await bcrypt.hash(userData.passwordHash, 12);
+      // SECURITY: Comprehensive user creation validation
+      const validatedUserData = validateUserCreation(userData, authReq.tenantContext!);
       
-      // Set client ID for client admins
-      const authReq = req as AuthenticatedRequest;
-      if (authReq.user.role === 'client_admin') {
-        userData.clientId = authReq.user.clientId;
-      }
-
+      // SECURITY: Ensure user is created for the correct client
+      validatedUserData.clientId = authReq.validatedClientId!;
+      
+      // Hash password
+      const hashedPassword = await bcrypt.hash(validatedUserData.passwordHash, 12);
+      
       const user = await storage.createUser({
-        ...userData,
+        ...validatedUserData,
         passwordHash: hashedPassword
+      });
+      
+      // SECURITY: Log user creation for audit trail
+      logTenantAccess(authReq.user.id, 'create', 'user', user.id, authReq.validatedClientId!);
+      
+      // Create analytics event for user creation
+      await storage.createAnalyticsEvent({
+        clientId: authReq.validatedClientId!,
+        userId: authReq.user.id,
+        eventType: 'login', // Will be user_created when we add this event type
+        metadata: { action: 'user_created', newUserId: user.id },
+        timestamp: new Date()
       });
 
       res.json({
@@ -1270,41 +1312,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Course management routes
-  app.get("/api/courses", authenticateToken, async (req, res) => {
+  // Course management routes - SECURITY: Now tenant-scoped
+  app.get("/api/courses", authenticateToken, tenantMiddleware.requireClientId(), async (req, res) => {
     try {
+      const authReq = req as AuthenticatedRequest;
+      const queryHelper = new TenantQueryHelper(authReq.tenantContext!);
+      
       const language = (req.query.language as string) || 'en';
-      const courses = await storage.getCoursesByLanguage(language);
+      const courses = await storage.getCoursesByLanguageAndClient(language, authReq.validatedClientId!);
+      
+      logTenantAccess(authReq.user.id, 'read', 'courses', 'list', authReq.validatedClientId!);
       res.json(courses);
     } catch (error) {
       res.status(500).json({ message: 'Failed to fetch courses', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
-  app.get("/api/courses/published", authenticateToken, async (req, res) => {
+  app.get("/api/courses/published", authenticateToken, tenantMiddleware.requireClientId(), async (req, res) => {
     try {
-      const courses = await storage.getPublishedCourses();
+      const authReq = req as AuthenticatedRequest;
+      const courses = await storage.getPublishedCoursesByClient(authReq.validatedClientId!);
+      
+      logTenantAccess(authReq.user.id, 'read', 'courses', 'published', authReq.validatedClientId!);
       res.json(courses);
     } catch (error) {
       res.status(500).json({ message: 'Failed to fetch published courses', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
-  app.post("/api/courses", authenticateAdmin, async (req, res) => {
+  app.post("/api/courses", authenticateAdmin, tenantMiddleware.requireClientId(), async (req, res) => {
     try {
+      const authReq = req as AuthenticatedRequest;
       const courseData = insertCourseSchema.parse(req.body);
+      
+      // SECURITY: Ensure course is created for the correct client
+      const validatedData = validateRequestBody(courseData, authReq.validatedClientId!);
+      
       const course = await storage.createCourse({
-        ...courseData,
-        createdBy: (req as AuthenticatedRequest).user.id
+        ...validatedData,
+        clientId: authReq.validatedClientId!, // SECURITY: Force correct clientId
+        createdBy: authReq.user.id
       });
+      
+      logTenantAccess(authReq.user.id, 'create', 'course', course.id, authReq.validatedClientId!);
       res.json(course);
     } catch (error) {
       res.status(500).json({ message: 'Failed to create course', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
-  app.post("/api/courses/generate", authenticateAdmin, async (req, res) => {
+  app.post("/api/courses/generate", authenticateAdmin, tenantMiddleware.requireClientId(), async (req, res) => {
     try {
+      const authReq = req as AuthenticatedRequest;
       const { topic, difficulty, modules } = req.body;
       
       const generatedCourse = await openaiService.generateCourse(topic, difficulty, modules);
@@ -1316,9 +1375,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         difficulty,
         estimatedDuration: generatedCourse.estimatedDuration,
         status: 'draft',
-        createdBy: (req as AuthenticatedRequest).user.id
+        clientId: authReq.validatedClientId!, // SECURITY: Force correct clientId
+        createdBy: authReq.user.id
       });
 
+      logTenantAccess(authReq.user.id, 'create', 'course', course.id, authReq.validatedClientId!);
       res.json(course);
     } catch (error) {
       res.status(500).json({ message: 'Failed to generate course', error: error instanceof Error ? error.message : 'Unknown error' });
@@ -1326,19 +1387,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // User progress routes
-  app.get("/api/progress/:userId", authenticateToken, async (req, res) => {
+  app.get("/api/progress/:userId", authenticateToken, tenantMiddleware.standard(), async (req, res) => {
     try {
       const { userId } = req.params;
       
-      // Users can only see their own progress, admins can see any
+      // SECURITY: Users can only see their own progress, admins can see any within their tenant
       const authReq = req as AuthenticatedRequest;
       if (authReq.user.role === 'end_user' && userId !== authReq.user.id) {
         return res.status(403).json({ message: 'Access denied' });
       }
 
+      // SECURITY: Validate that user belongs to the authenticated user's tenant
+      if (!authReq.validatedClientId) {
+        return res.status(400).json({ message: 'Client validation required' });
+      }
+      
+      // First verify the target user belongs to the same tenant
+      const targetUser = await storage.getUserWithClientValidation(userId, authReq.validatedClientId);
+      if (!targetUser) {
+        return res.status(404).json({ message: 'User not found or access denied' });
+      }
+
       const progress = await storage.getUserProgressByUser(userId);
+      logTenantAccess(authReq.user.id, 'read', 'user_progress', userId, authReq.validatedClientId);
       res.json(progress);
     } catch (error) {
+      console.error('🚨 SECURITY: Progress access error:', error);
       res.status(500).json({ message: 'Failed to fetch progress', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
@@ -1391,76 +1465,93 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Phishing campaign routes
-  app.get("/api/campaigns", authenticateAdmin, async (req, res) => {
+  app.get("/api/campaigns", authenticateAdmin, tenantMiddleware.allowSuperAdminWildcard(), async (req, res) => {
     try {
-      let campaigns;
+      // SECURITY: Use tenant query helper for safe campaign access
       const authReq = req as AuthenticatedRequest;
-      if (authReq.user.role === 'super_admin') {
-        const clientId = req.query.clientId as string;
-        campaigns = clientId ? await storage.getCampaignsByClient(clientId) : [];
-      } else {
-        campaigns = await storage.getCampaignsByClient(authReq.user.clientId!);
+      const queryHelper = new TenantQueryHelper(authReq.tenantContext!);
+      
+      const requestedClientId = req.query.clientId as string;
+      const campaigns = await queryHelper.getCampaigns(requestedClientId);
+      
+      const clientId = authReq.validatedClientId || authReq.user.clientId;
+      if (clientId) {
+        logTenantAccess(authReq.user.id, 'read', 'campaigns', 'list', clientId);
       }
+      
       res.json(campaigns);
     } catch (error) {
+      console.error('🚨 SECURITY: Campaign list access error:', error);
       res.status(500).json({ message: 'Failed to fetch campaigns', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
-  app.post("/api/campaigns", authenticateAdmin, async (req, res) => {
+  app.post("/api/campaigns", authenticateAdmin, tenantMiddleware.requireClientId(), async (req, res) => {
     try {
-      const campaignData = insertPhishingCampaignSchema.parse(req.body);
-      
       const authReq = req as AuthenticatedRequest;
-      if (authReq.user.role === 'client_admin') {
-        campaignData.clientId = authReq.user.clientId!;
+      
+      if (!authReq.validatedClientId) {
+        return res.status(400).json({ message: 'Client validation required' });
       }
+      
+      // SECURITY: Validate request body and enforce tenant context
+      const validatedBody = validateRequestBody(req.body, authReq.validatedClientId, authReq.tenantContext);
+      const campaignData = insertPhishingCampaignSchema.parse(validatedBody);
+      
+      // Ensure campaign is created for the validated client
+      campaignData.clientId = authReq.validatedClientId;
 
       const campaign = await storage.createCampaign({
         ...campaignData,
-        createdBy: (req as AuthenticatedRequest).user.id
+        createdBy: authReq.user.id
       });
 
+      logTenantAccess(authReq.user.id, 'create', 'campaign', campaign.id, authReq.validatedClientId);
       res.json(campaign);
     } catch (error) {
+      console.error('🚨 SECURITY: Campaign creation error:', error);
       res.status(500).json({ message: 'Failed to create campaign', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
-  app.get("/api/campaigns/:id", authenticateAdmin, async (req, res) => {
+  app.get("/api/campaigns/:id", authenticateAdmin, tenantMiddleware.requireClientId(), async (req, res) => {
     try {
       const { id } = req.params;
-      const campaign = await storage.getCampaign(id);
+      const authReq = req as AuthenticatedRequest;
+      
+      if (!authReq.validatedClientId) {
+        return res.status(400).json({ message: 'Client validation required' });
+      }
+      
+      // SECURITY: Use tenant-safe campaign access
+      const campaign = await storage.getCampaignWithClientValidation(id, authReq.validatedClientId);
       
       if (!campaign) {
-        return res.status(404).json({ message: 'Campaign not found' });
+        return res.status(404).json({ message: 'Campaign not found or access denied' });
       }
 
-      // Check access permissions
-      const authReq = req as AuthenticatedRequest;
-      if (authReq.user.role === 'client_admin' && campaign.clientId !== authReq.user.clientId) {
-        return res.status(403).json({ message: 'Access denied' });
-      }
-
+      logTenantAccess(authReq.user.id, 'read', 'campaign', id, authReq.validatedClientId);
       res.json(campaign);
     } catch (error) {
+      console.error('🚨 SECURITY: Campaign access error:', error);
       res.status(500).json({ message: 'Failed to fetch campaign', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
-  app.put("/api/campaigns/:id", authenticateAdmin, async (req, res) => {
+  app.put("/api/campaigns/:id", authenticateAdmin, tenantMiddleware.requireClientId(), async (req, res) => {
     try {
       const { id } = req.params;
-      const campaign = await storage.getCampaign(id);
+      const authReq = req as AuthenticatedRequest;
+      
+      if (!authReq.validatedClientId) {
+        return res.status(400).json({ message: 'Client validation required' });
+      }
+      
+      // SECURITY: Use tenant-safe campaign access
+      const campaign = await storage.getCampaignWithClientValidation(id, authReq.validatedClientId);
       
       if (!campaign) {
-        return res.status(404).json({ message: 'Campaign not found' });
-      }
-
-      // Check access permissions
-      const authReq = req as AuthenticatedRequest;
-      if (authReq.user.role === 'client_admin' && campaign.clientId !== authReq.user.clientId) {
-        return res.status(403).json({ message: 'Access denied' });
+        return res.status(404).json({ message: 'Campaign not found or access denied' });
       }
 
       // Don't allow updating active campaigns
@@ -1468,27 +1559,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Cannot update active campaigns' });
       }
 
-      const updates = req.body;
-      const updatedCampaign = await storage.updateCampaign(id, updates);
+      // SECURITY: Validate request body and use tenant-safe update
+      const validatedBody = validateRequestBody(req.body, authReq.validatedClientId, authReq.tenantContext);
+      const updatedCampaign = await storage.updateCampaignWithClientValidation(id, validatedBody, authReq.validatedClientId);
+      
+      logTenantAccess(authReq.user.id, 'update', 'campaign', id, authReq.validatedClientId);
       res.json(updatedCampaign);
     } catch (error) {
+      console.error('🚨 SECURITY: Campaign update error:', error);
       res.status(500).json({ message: 'Failed to update campaign', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
-  app.delete("/api/campaigns/:id", authenticateAdmin, async (req, res) => {
+  app.delete("/api/campaigns/:id", authenticateAdmin, tenantMiddleware.requireClientId(), async (req, res) => {
     try {
       const { id } = req.params;
-      const campaign = await storage.getCampaign(id);
+      const authReq = req as AuthenticatedRequest;
+      
+      if (!authReq.validatedClientId) {
+        return res.status(400).json({ message: 'Client validation required' });
+      }
+      
+      // SECURITY: Use tenant-safe campaign access
+      const campaign = await storage.getCampaignWithClientValidation(id, authReq.validatedClientId);
       
       if (!campaign) {
-        return res.status(404).json({ message: 'Campaign not found' });
-      }
-
-      // Check access permissions
-      const authReq = req as AuthenticatedRequest;
-      if (authReq.user.role === 'client_admin' && campaign.clientId !== authReq.user.clientId) {
-        return res.status(403).json({ message: 'Access denied' });
+        return res.status(404).json({ message: 'Campaign not found or access denied' });
       }
 
       // Don't allow deleting active campaigns
@@ -1496,57 +1592,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Cannot delete active campaigns' });
       }
 
-      await storage.deleteCampaign(id);
+      // SECURITY: Use tenant-safe deletion
+      await storage.deleteCampaignWithClientValidation(id, authReq.validatedClientId);
+      
+      logTenantAccess(authReq.user.id, 'delete', 'campaign', id, authReq.validatedClientId);
       res.json({ message: 'Campaign deleted successfully' });
     } catch (error) {
+      console.error('🚨 SECURITY: Campaign deletion error:', error);
       res.status(500).json({ message: 'Failed to delete campaign', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
-  app.post("/api/campaigns/:id/launch", authenticateAdmin, async (req, res) => {
+  app.post("/api/campaigns/:id/launch", authenticateAdmin, tenantMiddleware.requireClientId(), async (req, res) => {
     try {
       const { id } = req.params;
-      const campaign = await storage.getCampaign(id);
+      const authReq = req as AuthenticatedRequest;
+      
+      if (!authReq.validatedClientId) {
+        return res.status(400).json({ message: 'Client validation required' });
+      }
+      
+      // SECURITY: Use tenant-safe campaign access
+      const campaign = await storage.getCampaignWithClientValidation(id, authReq.validatedClientId);
       
       if (!campaign) {
-        return res.status(404).json({ message: 'Campaign not found' });
+        return res.status(404).json({ message: 'Campaign not found or access denied' });
       }
 
-      // Check access permissions
-      const authReq = req as AuthenticatedRequest;
-      if (authReq.user.role === 'client_admin' && campaign.clientId !== authReq.user.clientId) {
-        return res.status(403).json({ message: 'Access denied' });
-      }
-
-      // Get target users
-      const targetUsers = await storage.getUsersByClient(campaign.clientId);
+      // Get target users for this tenant
+      const targetUsers = await storage.getUsersByClient(authReq.validatedClientId);
       
       // Send emails via SendGrid
       const emailResults = await sendgridService.sendPhishingCampaign(campaign, targetUsers);
       
-      // Update campaign status
-      await storage.updateCampaign(id, {
+      // SECURITY: Use tenant-safe campaign update
+      await storage.updateCampaignWithClientValidation(id, {
         status: 'active',
         emailsSent: emailResults.sent
-      });
+      }, authReq.validatedClientId);
 
+      logTenantAccess(authReq.user.id, 'launch', 'campaign', id, authReq.validatedClientId);
       res.json({ success: true, emailsSent: emailResults.sent });
     } catch (error) {
+      console.error('🚨 SECURITY: Campaign launch error:', error);
       res.status(500).json({ message: 'Failed to launch campaign', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
-  app.get("/api/campaigns/:id/results", authenticateAdmin, async (req, res) => {
+  app.get("/api/campaigns/:id/results", authenticateAdmin, tenantMiddleware.requireClientId(), async (req, res) => {
     try {
       const { id } = req.params;
-      const campaign = await storage.getCampaign(id);
+      const authReq = req as AuthenticatedRequest;
+      
+      if (!authReq.validatedClientId) {
+        return res.status(400).json({ message: 'Client validation required' });
+      }
+      
+      // SECURITY: Use tenant-safe campaign access
+      const campaign = await storage.getCampaignWithClientValidation(id, authReq.validatedClientId);
       
       if (!campaign) {
-        return res.status(404).json({ message: 'Campaign not found' });
+        return res.status(404).json({ message: 'Campaign not found or access denied' });
       }
 
-      // Check access permissions
-      const authReq = req as AuthenticatedRequest;
+      // Check access permissions (redundant but kept for clarity)
+      // const authReq = req as AuthenticatedRequest;
       if (authReq.user.role === 'client_admin' && campaign.clientId !== authReq.user.clientId) {
         return res.status(403).json({ message: 'Access denied' });
       }
@@ -1630,30 +1740,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Analytics routes
-  app.get("/api/analytics", authenticateAdmin, async (req, res) => {
+  // SECURITY: Analytics route now properly tenant-scoped
+  app.get("/api/analytics", authenticateAdmin, tenantMiddleware.allowSuperAdminWildcard(), async (req, res) => {
     try {
-      const { startDate, endDate } = req.query;
-      let events;
-
       const authReq = req as AuthenticatedRequest;
-      if (authReq.user.role === 'super_admin') {
-        const clientId = req.query.clientId as string;
-        if (clientId) {
-          events = await storage.getAnalyticsEventsByClient(
-            clientId,
-            startDate ? new Date(startDate as string) : undefined,
-            endDate ? new Date(endDate as string) : undefined
-          );
-        }
-      } else if (authReq.user.clientId) {
-        events = await storage.getAnalyticsEventsByClient(
-          authReq.user.clientId,
-          startDate ? new Date(startDate as string) : undefined,
-          endDate ? new Date(endDate as string) : undefined
-        );
+      const queryHelper = new TenantQueryHelper(authReq.tenantContext!);
+      
+      const { startDate, endDate } = req.query;
+      const requestedClientId = req.query.clientId as string;
+      
+      // SECURITY: Use tenant query helper for safe analytics access
+      const events = await queryHelper.getAnalyticsEvents(
+        requestedClientId,
+        startDate ? new Date(startDate as string) : undefined,
+        endDate ? new Date(endDate as string) : undefined
+      );
+      
+      const clientId = requestedClientId || authReq.user.clientId;
+      if (clientId) {
+        logTenantAccess(authReq.user.id, 'read', 'analytics', 'events', clientId);
       }
 
-      res.json(events || []);
+      res.json(events);
     } catch (error) {
       res.status(500).json({ message: 'Failed to fetch analytics', error: error instanceof Error ? error.message : 'Unknown error' });
     }
