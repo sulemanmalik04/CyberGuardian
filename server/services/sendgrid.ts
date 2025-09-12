@@ -1,12 +1,18 @@
 import { MailService } from '@sendgrid/mail';
 import type { PhishingCampaign, User } from '@shared/schema';
 
-if (!process.env.SENDGRID_API_KEY) {
-  throw new Error("SENDGRID_API_KEY environment variable must be set");
-}
+const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
+const isDevelopment = process.env.NODE_ENV === 'development';
 
-const mailService = new MailService();
-mailService.setApiKey(process.env.SENDGRID_API_KEY);
+// In development, we'll simulate email sending if no API key is provided
+let mailService: MailService | null = null;
+
+if (SENDGRID_API_KEY) {
+  mailService = new MailService();
+  mailService.setApiKey(SENDGRID_API_KEY);
+} else if (!isDevelopment) {
+  throw new Error("SENDGRID_API_KEY environment variable must be set in production");
+}
 
 interface EmailParams {
   to: string;
@@ -33,6 +39,18 @@ interface CampaignResult {
 class SendGridService {
   async sendEmail(params: EmailParams): Promise<boolean> {
     try {
+      if (!mailService) {
+        // In development without API key, simulate successful email sending
+        console.log('📧 [DEV] Simulated email send:', {
+          to: params.to,
+          from: params.from,
+          subject: params.subject,
+          hasHtml: !!params.html,
+          hasText: !!params.text
+        });
+        return true;
+      }
+
       await mailService.send({
         to: params.to,
         from: params.from,

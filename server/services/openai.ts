@@ -1,10 +1,19 @@
 import OpenAI from "openai";
 import type { User, UserCourseProgress } from "@shared/schema";
 
-// the newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
-const openai = new OpenAI({ 
-  apiKey: process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_ENV_VAR || "default_key" 
-});
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_ENV_VAR;
+const isDevelopment = process.env.NODE_ENV === 'development';
+
+// Initialize OpenAI client only if API key is available
+let openai: OpenAI | null = null;
+
+if (OPENAI_API_KEY) {
+  openai = new OpenAI({ 
+    apiKey: OPENAI_API_KEY 
+  });
+} else if (!isDevelopment) {
+  throw new Error("OPENAI_API_KEY environment variable must be set in production");
+}
 
 interface GeneratedCourse {
   title: string;
@@ -35,6 +44,10 @@ interface LearningRecommendation {
 
 class OpenAIService {
   async generateCourse(topic: string, difficulty: string, moduleCount: number = 5): Promise<GeneratedCourse> {
+    if (!openai) {
+      throw new Error('OpenAI API key not configured. Please set OPENAI_API_KEY environment variable.');
+    }
+    
     try {
       const prompt = `Create a comprehensive cybersecurity training course about "${topic}" at ${difficulty} level with ${moduleCount} modules. 
       
@@ -97,6 +110,10 @@ class OpenAIService {
     options: string[];
     correctAnswer: number;
   }>> {
+    if (!openai) {
+      throw new Error('OpenAI API key not configured. Please set OPENAI_API_KEY environment variable.');
+    }
+    
     try {
       const prompt = `Based on the following cybersecurity training content, generate ${questionCount} multiple-choice questions that test understanding of key concepts:
 
@@ -141,6 +158,10 @@ class OpenAIService {
   }
 
   async chatWithUser(message: string, user: User, context?: any): Promise<string> {
+    if (!openai) {
+      return 'I apologize, but the AI assistant is not available at the moment. Please contact your administrator for assistance.';
+    }
+    
     try {
       let systemPrompt = `You are a helpful cybersecurity training assistant. You help users with cybersecurity awareness, training recommendations, and answering security-related questions.
 
@@ -188,6 +209,24 @@ class OpenAIService {
   }
 
   async generateLearningRecommendations(user: User, userProgress: UserCourseProgress[]): Promise<LearningRecommendation[]> {
+    if (!openai) {
+      // Return default recommendations when OpenAI is not available
+      return [
+        {
+          title: 'Password Security Fundamentals',
+          description: 'Learn how to create and manage strong passwords',
+          priority: 'high' as const,
+          reason: 'Essential security foundation for all users'
+        },
+        {
+          title: 'Email Security and Phishing Recognition',
+          description: 'Identify and respond to suspicious emails',
+          priority: 'high' as const,
+          reason: 'Protect against common phishing attacks'
+        }
+      ];
+    }
+    
     try {
       const progressSummary = userProgress.map(p => ({
         courseId: p.courseId,
@@ -252,6 +291,10 @@ class OpenAIService {
     htmlContent: string;
     textContent: string;
   }> {
+    if (!openai) {
+      throw new Error('OpenAI API key not configured. Please set OPENAI_API_KEY environment variable.');
+    }
+    
     try {
       const prompt = `Generate a realistic phishing email simulation for cybersecurity training at ${difficulty} difficulty level.
 

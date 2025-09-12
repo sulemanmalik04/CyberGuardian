@@ -2,15 +2,24 @@ import AWS from 'aws-sdk';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 
-// Configure AWS
-AWS.config.update({
-  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  region: process.env.AWS_REGION || 'us-east-1'
-});
+const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID;
+const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY;
+const isDevelopment = process.env.NODE_ENV === 'development';
 
-const s3 = new AWS.S3();
+// Configure AWS only if credentials are available
+let s3: AWS.S3 | null = null;
 const BUCKET_NAME = process.env.S3_BUCKET_NAME || 'cyberaware-assets';
+
+if (AWS_ACCESS_KEY_ID && AWS_SECRET_ACCESS_KEY) {
+  AWS.config.update({
+    accessKeyId: AWS_ACCESS_KEY_ID,
+    secretAccessKey: AWS_SECRET_ACCESS_KEY,
+    region: process.env.AWS_REGION || 'us-east-1'
+  });
+  s3 = new AWS.S3();
+} else if (!isDevelopment) {
+  throw new Error("AWS credentials must be set in production");
+}
 
 interface UploadFile {
   buffer: Buffer;
@@ -20,6 +29,10 @@ interface UploadFile {
 
 class S3Service {
   async uploadFile(file: UploadFile, folder: string = 'uploads'): Promise<string> {
+    if (!s3) {
+      throw new Error('AWS S3 not configured. Please set AWS credentials.');
+    }
+    
     try {
       const fileExtension = path.extname(file.originalname);
       const fileName = `${folder}/${uuidv4()}${fileExtension}`;
@@ -41,6 +54,10 @@ class S3Service {
   }
 
   async uploadLogo(file: UploadFile, clientId: string): Promise<string> {
+    if (!s3) {
+      throw new Error('AWS S3 not configured. Please set AWS credentials.');
+    }
+    
     try {
       const fileExtension = path.extname(file.originalname);
       const fileName = `logos/${clientId}/${uuidv4()}${fileExtension}`;
@@ -77,6 +94,10 @@ class S3Service {
   }
 
   async uploadCourseContent(file: UploadFile, courseId: string): Promise<string> {
+    if (!s3) {
+      throw new Error('AWS S3 not configured. Please set AWS credentials.');
+    }
+    
     try {
       const fileExtension = path.extname(file.originalname);
       const fileName = `courses/${courseId}/${uuidv4()}${fileExtension}`;
@@ -120,6 +141,10 @@ class S3Service {
   }
 
   async generatePresignedUrl(key: string, expiresIn: number = 3600): Promise<string> {
+    if (!s3) {
+      throw new Error('AWS S3 not configured. Please set AWS credentials.');
+    }
+    
     try {
       const params = {
         Bucket: BUCKET_NAME,
@@ -135,6 +160,10 @@ class S3Service {
   }
 
   async deleteFile(key: string): Promise<void> {
+    if (!s3) {
+      throw new Error('AWS S3 not configured. Please set AWS credentials.');
+    }
+    
     try {
       const params = {
         Bucket: BUCKET_NAME,
@@ -149,6 +178,10 @@ class S3Service {
   }
 
   async listFiles(folder: string): Promise<string[]> {
+    if (!s3) {
+      throw new Error('AWS S3 not configured. Please set AWS credentials.');
+    }
+    
     try {
       const params = {
         Bucket: BUCKET_NAME,
@@ -164,6 +197,10 @@ class S3Service {
   }
 
   async copyFile(sourceKey: string, destKey: string): Promise<string> {
+    if (!s3) {
+      throw new Error('AWS S3 not configured. Please set AWS credentials.');
+    }
+    
     try {
       const copyParams = {
         Bucket: BUCKET_NAME,
