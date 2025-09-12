@@ -16,7 +16,33 @@ import { Readable } from "stream";
 import crypto from "crypto";
 import { verify } from "@noble/ed25519";
 
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB global limit (specific endpoints can have stricter limits)
+    files: 1, // Only one file at a time
+    fields: 10, // Limit form fields
+    fieldNameSize: 100, // Limit field name size
+    fieldSize: 1024 * 1024 // 1MB limit for form field values
+  },
+  fileFilter: (req, file, cb) => {
+    // Basic file filter - specific endpoints will do more validation
+    const allowedMimes = [
+      'text/csv', 
+      'application/vnd.ms-excel', 
+      'text/plain',
+      'image/jpeg', 
+      'image/png', 
+      'image/svg+xml', 
+      'image/webp'
+    ];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type'), false);
+    }
+  }
+});
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
@@ -720,57 +746,431 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // CSV validation helper functions
+  const validateEmail = (email: string): boolean => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const validateRole = (role: string): boolean => {
+    const validRoles = ['super_admin', 'client_admin', 'end_user'];
+    return !role || validRoles.includes(role);
+  };
+
+  const validateLanguage = (language: string): boolean => {
+    const validLanguages = ['en', 'es', 'fr', 'de', 'it'];
+    return !language || validLanguages.includes(language);
+  };
+
+  const sanitizeText = (text: string): string => {
+    return text ? text.toString().trim().replace(/[<>]/g, '') : '';
+  };
+
+  const validateCSVData = async (rows: any[], clientId: string) => {
+    const validRows: any[] = [];
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    const duplicateEmails = new Set<string>();
+    
+    // Get existing users to check for duplicates
+    const existingUsers = await storage.getUsersByClient(clientId);
+    const existingEmails = new Set(existingUsers.map(u => u.email.toLowerCase()));
+
+    for (const [index, row] of Array.from(rows.entries())) {
+      const rowNum = index + 1;
+      const rowErrors: string[] = [];
+      const rowWarnings: string[] = [];
+
+      // Sanitize data
+      const email = sanitizeText(row.email || '').toLowerCase();
+      const firstName = sanitizeText(row.firstName || '');
+      const lastName = sanitizeText(row.lastName || '');
+      const department = sanitizeText(row.department || '');
+      const role = sanitizeText(row.role || 'end_user').toLowerCase();
+      const language = sanitizeText(row.language || 'en').toLowerCase();
+
+      // Required field validation
+      if (!email) rowErrors.push('Email is required');
+      if (!firstName) rowErrors.push('First name is required');
+      if (!lastName) rowErrors.push('Last name is required');
+
+      // Email format validation
+      if (email && !validateEmail(email)) {
+        rowErrors.push('Invalid email format');
+      }
+
+      // Check for duplicate emails in CSV
+      if (email) {
+        if (duplicateEmails.has(email)) {
+          rowErrors.push('Duplicate email in CSV file');
+        } else {
+          duplicateEmails.add(email);
+        }
+      }
+
+      // Check if email already exists in database
+      if (email && existingEmails.has(email)) {
+        rowWarnings.push('Email already exists in system');
+      }
+
+      // Role validation
+      if (!validateRole(role)) {
+        rowErrors.push(`Invalid role '${role}'. Valid roles: super_admin, client_admin, end_user`);
+      }
+
+      // Language validation
+      if (!validateLanguage(language)) {
+        rowWarnings.push(`Invalid language '${language}'. Defaulting to 'en'`);
+      }
+
+      // Name length validation
+      if (firstName.length > 50) rowErrors.push('First name too long (max 50 characters)');
+      if (lastName.length > 50) rowErrors.push('Last name too long (max 50 characters)');
+      if (department.length > 100) rowErrors.push('Department too long (max 100 characters)');
+
+      // Compile row results
+      if (rowErrors.length > 0) {
+        errors.push(`Row ${rowNum}: ${rowErrors.join(', ')}`);
+      }
+
+      if (rowWarnings.length > 0) {
+        warnings.push(`Row ${rowNum}: ${rowWarnings.join(', ')}`);
+      }
+
+      if (rowErrors.length === 0) {
+        validRows.push({
+          originalIndex: index,
+          email,
+          firstName,
+          lastName,
+          department: department || null,
+          role: role || 'end_user',
+          language: language || 'en'
+        });
+      }
+    }
+
+    return { validRows, errors, warnings };
+  };
+
+  // CSV Preview endpoint
+  app.post("/api/users/preview-csv", authenticateToken, requireRole(['client_admin']), upload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: 'No file uploaded' });
+      }
+
+      // File size validation (5MB limit)
+      const maxSize = 5 * 1024 * 1024; // 5MB
+      if (req.file.size > maxSize) {
+        return res.status(400).json({ message: 'File too large. Maximum size is 5MB.' });
+      }
+
+      // File type validation
+      const allowedTypes = ['text/csv', 'application/vnd.ms-excel', 'text/plain'];
+      if (!allowedTypes.includes(req.file.mimetype)) {
+        return res.status(400).json({ message: 'Invalid file type. Only CSV files are allowed.' });
+      }
+
+      const results: any[] = [];
+      const stream = Readable.from(req.file.buffer);
+      
+      stream
+        .pipe(csvParser())
+        .on('data', (data) => {
+          // Limit to 1000 rows for preview
+          if (results.length < 1000) {
+            results.push(data);
+          }
+        })
+        .on('end', async () => {
+          try {
+            const authReq = req as AuthenticatedRequest;
+            const validation = await validateCSVData(results, authReq.user.clientId!);
+
+            res.json({
+              success: true,
+              totalRows: results.length,
+              validRows: validation.validRows.length,
+              invalidRows: results.length - validation.validRows.length,
+              errors: validation.errors,
+              warnings: validation.warnings,
+              preview: validation.validRows.slice(0, 10), // Show first 10 valid rows
+              sampleHeaders: Object.keys(results[0] || {}),
+              truncated: results.length === 1000
+            });
+          } catch (error) {
+            console.error('CSV validation error:', error);
+            res.status(500).json({ 
+              message: 'Failed to validate CSV data', 
+              error: error instanceof Error ? error.message : 'Unknown error' 
+            });
+          }
+        })
+        .on('error', (error) => {
+          console.error('CSV parsing error:', error);
+          res.status(400).json({ 
+            message: 'Failed to parse CSV file. Please check file format.', 
+            error: error.message 
+          });
+        });
+    } catch (error) {
+      console.error('CSV preview error:', error);
+      res.status(500).json({ 
+        message: 'CSV preview failed', 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
+    }
+  });
+
+  // Enhanced CSV Import endpoint
   app.post("/api/users/import-csv", authenticateToken, requireRole(['client_admin']), upload.single('file'), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded' });
       }
 
+      // File size validation (5MB limit)
+      const maxSize = 5 * 1024 * 1024; // 5MB
+      if (req.file.size > maxSize) {
+        return res.status(400).json({ message: 'File too large. Maximum size is 5MB.' });
+      }
+
+      // File type validation
+      const allowedTypes = ['text/csv', 'application/vnd.ms-excel', 'text/plain'];
+      if (!allowedTypes.includes(req.file.mimetype)) {
+        return res.status(400).json({ message: 'Invalid file type. Only CSV files are allowed.' });
+      }
+
       const results: any[] = [];
-      const errors: string[] = [];
-      
       const stream = Readable.from(req.file.buffer);
       
       stream
         .pipe(csvParser())
         .on('data', (data) => results.push(data))
         .on('end', async () => {
-          const createdUsers = [];
-          
-          for (const [index, row] of Array.from(results.entries())) {
-            try {
-              if (!row.email || !row.firstName || !row.lastName) {
-                errors.push(`Row ${index + 1}: Missing required fields (email, firstName, lastName)`);
-                continue;
-              }
+          try {
+            const authReq = req as AuthenticatedRequest;
+            const validation = await validateCSVData(results, authReq.user.clientId!);
 
-              const hashedPassword = await bcrypt.hash('TempPass123!', 12);
-              
-              const user = await storage.createUser({
-                email: row.email,
-                firstName: row.firstName,
-                lastName: row.lastName,
-                passwordHash: hashedPassword,
-                role: 'end_user',
-                clientId: (req as AuthenticatedRequest).user.clientId,
-                department: row.department || null,
-                language: row.language || 'en'
+            if (validation.validRows.length === 0) {
+              return res.status(400).json({
+                success: false,
+                message: 'No valid rows found in CSV file',
+                errors: validation.errors,
+                warnings: validation.warnings,
+                created: 0
               });
-
-              createdUsers.push(user);
-            } catch (error) {
-              errors.push(`Row ${index + 1}: ${error instanceof Error ? error.message : 'Unknown error'}`);
             }
-          }
 
-          res.json({
-            success: true,
-            created: createdUsers.length,
-            errors
+            const createdUsers = [];
+            const importErrors: string[] = [];
+
+            // Process valid rows
+            for (const row of validation.validRows) {
+              try {
+                // Generate a secure temporary password
+                const tempPassword = crypto.randomBytes(12).toString('base64').slice(0, 12);
+                const hashedPassword = await bcrypt.hash(tempPassword, 12);
+                
+                const user = await storage.createUser({
+                  email: row.email,
+                  firstName: row.firstName,
+                  lastName: row.lastName,
+                  passwordHash: hashedPassword,
+                  role: row.role,
+                  clientId: authReq.user.clientId,
+                  department: row.department,
+                  language: row.language
+                });
+
+                createdUsers.push({
+                  id: user.id,
+                  email: user.email,
+                  firstName: user.firstName,
+                  lastName: user.lastName,
+                  tempPassword // Only for this response, not stored
+                });
+
+                // Track user creation event
+                await storage.createAnalyticsEvent({
+                  clientId: authReq.user.clientId,
+                  userId: authReq.user.id,
+                  eventType: 'user_created' as any,
+                  metadata: { 
+                    targetUserEmail: user.email,
+                    createdBy: authReq.user.email,
+                    importSource: 'csv'
+                  },
+                  timestamp: new Date()
+                });
+
+              } catch (error) {
+                const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+                importErrors.push(`Row ${row.originalIndex + 1}: ${errorMsg}`);
+              }
+            }
+
+            res.json({
+              success: true,
+              totalProcessed: results.length,
+              created: createdUsers.length,
+              validRows: validation.validRows.length,
+              errors: [...validation.errors, ...importErrors],
+              warnings: validation.warnings,
+              createdUsers: createdUsers.map(u => ({
+                id: u.id,
+                email: u.email,
+                firstName: u.firstName,
+                lastName: u.lastName,
+                tempPassword: u.tempPassword
+              }))
+            });
+          } catch (error) {
+            console.error('CSV import processing error:', error);
+            res.status(500).json({ 
+              message: 'Failed to process CSV import', 
+              error: error instanceof Error ? error.message : 'Unknown error' 
+            });
+          }
+        })
+        .on('error', (error) => {
+          console.error('CSV parsing error:', error);
+          res.status(400).json({ 
+            message: 'Failed to parse CSV file. Please check file format.', 
+            error: error.message 
           });
         });
     } catch (error) {
-      res.status(500).json({ message: 'CSV import failed', error: error instanceof Error ? error.message : 'Unknown error' });
+      console.error('CSV import error:', error);
+      res.status(500).json({ 
+        message: 'CSV import failed', 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
+    }
+  });
+
+  // Update user route
+  app.put("/api/users/:id", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+      const authReq = req as AuthenticatedRequest;
+
+      // Get existing user to verify access
+      const existingUser = await storage.getUser(id);
+      if (!existingUser) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      // Client admins can only update users in their client
+      if (authReq.user.role === 'client_admin' && existingUser.clientId !== authReq.user.clientId) {
+        return res.status(403).json({ message: 'Access denied - cannot update users from other clients' });
+      }
+
+      // Hash password if it's being updated
+      if (updates.passwordHash) {
+        updates.passwordHash = await bcrypt.hash(updates.passwordHash, 12);
+      }
+
+      // Validate role changes
+      if (updates.role) {
+        // Client admins cannot create super admins
+        if (authReq.user.role === 'client_admin' && updates.role === 'super_admin') {
+          return res.status(403).json({ message: 'Access denied - cannot assign super admin role' });
+        }
+        
+        // Client admins cannot change roles across clients
+        if (authReq.user.role === 'client_admin' && updates.clientId && updates.clientId !== authReq.user.clientId) {
+          return res.status(403).json({ message: 'Access denied - cannot assign users to other clients' });
+        }
+      }
+
+      const updatedUser = await storage.updateUser(id, updates);
+
+      // Track user update event
+      await storage.createAnalyticsEvent({
+        clientId: authReq.user.clientId,
+        userId: authReq.user.id,
+        eventType: 'user_updated' as any,
+        metadata: { 
+          targetUserId: id,
+          updatedFields: Object.keys(updates),
+          updatedBy: authReq.user.email
+        },
+        timestamp: new Date()
+      });
+
+      // Return user without password hash
+      res.json({
+        id: updatedUser.id,
+        email: updatedUser.email,
+        firstName: updatedUser.firstName,
+        lastName: updatedUser.lastName,
+        role: updatedUser.role,
+        department: updatedUser.department,
+        language: updatedUser.language,
+        isActive: updatedUser.isActive,
+        clientId: updatedUser.clientId,
+        lastLoginAt: updatedUser.lastLoginAt,
+        createdAt: updatedUser.createdAt,
+        updatedAt: updatedUser.updatedAt
+      });
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to update user', error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+  });
+
+  // Delete/deactivate user route
+  app.delete("/api/users/:id", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const authReq = req as AuthenticatedRequest;
+
+      // Get existing user to verify access
+      const existingUser = await storage.getUser(id);
+      if (!existingUser) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      // Client admins can only deactivate users in their client
+      if (authReq.user.role === 'client_admin' && existingUser.clientId !== authReq.user.clientId) {
+        return res.status(403).json({ message: 'Access denied - cannot deactivate users from other clients' });
+      }
+
+      // Prevent self-deactivation
+      if (existingUser.id === authReq.user.id) {
+        return res.status(400).json({ message: 'Cannot deactivate your own account' });
+      }
+
+      // Soft delete by deactivating user instead of hard delete
+      const deactivatedUser = await storage.updateUser(id, { isActive: false });
+
+      // Track user deactivation event
+      await storage.createAnalyticsEvent({
+        clientId: authReq.user.clientId,
+        userId: authReq.user.id,
+        eventType: 'user_deactivated' as any,
+        metadata: { 
+          targetUserId: id,
+          targetUserEmail: existingUser.email,
+          deactivatedBy: authReq.user.email
+        },
+        timestamp: new Date()
+      });
+
+      res.json({ 
+        message: 'User deactivated successfully',
+        user: {
+          id: deactivatedUser.id,
+          email: deactivatedUser.email,
+          firstName: deactivatedUser.firstName,
+          lastName: deactivatedUser.lastName,
+          isActive: deactivatedUser.isActive
+        }
+      });
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to deactivate user', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 

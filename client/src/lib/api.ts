@@ -145,6 +145,31 @@ export const api = {
     return response.json();
   },
 
+  async updateUser(id: string, userData: Partial<User>): Promise<User> {
+    const response = await apiRequest('PUT', `/api/users/${id}`, userData);
+    return response.json();
+  },
+
+  async deleteUser(id: string): Promise<void> {
+    const response = await apiRequest('DELETE', `/api/users/${id}`);
+    return response.json();
+  },
+
+  async previewUsersFromCSV(file: File) {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    const response = await fetch('/api/users/preview-csv', {
+      method: 'POST',
+      body: formData,
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+      }
+    });
+    
+    return response.json();
+  },
+
   async importUsersFromCSV(file: File) {
     const formData = new FormData();
     formData.append('file', file);

@@ -15,19 +15,29 @@ import {
   GraduationCap, 
   Fish,
   Computer,
-  FileText
+  FileText,
+  UserPlus,
+  Trash2,
+  MoreVertical
 } from 'lucide-react';
 import { api, type User } from '@/lib/api';
 import { Progress } from '@/components/ui/progress';
+import UserEditDialog from './UserEditDialog';
+import CSVImportDialog from './CSVImportDialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 export default function UserManagement() {
   const { user: currentUser } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [dialogMode, setDialogMode] = useState<'create' | 'edit'>('edit');
+  const [csvImportDialogOpen, setCsvImportDialogOpen] = useState(false);
 
   const { data: users = [], isLoading } = useQuery({
     queryKey: ['users', currentUser?.clientId],
@@ -35,20 +45,20 @@ export default function UserManagement() {
     enabled: !!currentUser
   });
 
-  const importCSVMutation = useMutation({
-    mutationFn: api.importUsersFromCSV,
-    onSuccess: (data) => {
+
+  const deleteUserMutation = useMutation({
+    mutationFn: api.deleteUser,
+    onSuccess: () => {
       toast({
-        title: 'CSV Import Complete',
-        description: `${data.created} users created. ${data.errors.length} errors.`,
-        variant: data.errors.length > 0 ? 'destructive' : 'default'
+        title: 'User Deactivated',
+        description: 'User has been deactivated successfully.',
       });
       queryClient.invalidateQueries({ queryKey: ['users'] });
     },
     onError: (error: any) => {
       toast({
-        title: 'Import Failed',
-        description: error.message,
+        title: 'Error',
+        description: error.message || 'Failed to deactivate user',
         variant: 'destructive'
       });
     }
@@ -66,11 +76,26 @@ export default function UserManagement() {
     return matchesSearch && matchesRole;
   });
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      importCSVMutation.mutate(file);
-    }
+
+  const handleEditUser = (user: User) => {
+    setSelectedUser(user);
+    setDialogMode('edit');
+    setEditDialogOpen(true);
+  };
+
+  const handleCreateUser = () => {
+    setSelectedUser(null);
+    setDialogMode('create');
+    setEditDialogOpen(true);
+  };
+
+  const handleDeleteUser = (userId: string) => {
+    deleteUserMutation.mutate(userId);
+  };
+
+  const handleCloseDialog = () => {
+    setEditDialogOpen(false);
+    setSelectedUser(null);
   };
 
   const getStatusColor = (isActive: boolean) => {
@@ -125,68 +150,50 @@ export default function UserManagement() {
           User Management
         </h2>
         <div className="flex items-center space-x-3">
+          <Button 
+            onClick={handleCreateUser}
+            data-testid="button-create-user"
+          >
+            <UserPlus className="w-4 h-4 mr-2" />
+            Create User
+          </Button>
           <Button variant="outline" data-testid="button-azure-ad">
             <Computer className="w-4 h-4 mr-2" />
             Import from Azure AD
           </Button>
           <Button 
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => setCsvImportDialogOpen(true)}
             data-testid="button-import-csv"
           >
             <Upload className="w-4 h-4 mr-2" />
             Import CSV
           </Button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".csv"
-            className="hidden"
-            onChange={handleFileUpload}
-            data-testid="input-csv-file"
-          />
         </div>
       </div>
 
-      {/* Import Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>CSV Import</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div 
-              className="border-2 border-dashed border-border rounded-lg p-8 text-center cursor-pointer hover:bg-muted/50 transition-colors"
-              onClick={() => fileInputRef.current?.click()}
-              data-testid="csv-drop-zone"
-            >
-              <FileText className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-              <p className="text-muted-foreground mb-2">
-                Drag & drop your CSV file here, or click to browse
-              </p>
-              <Button variant="outline" size="sm">
-                <Upload className="w-4 h-4 mr-2" />
-                Choose File
+      {/* Integration Section */}
+      <Card>
+        <CardHeader>
+          <CardTitle>User Import Options</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="flex items-center justify-between p-4 border border-border rounded-lg">
+              <div className="flex items-center space-x-3">
+                <Upload className="text-blue-600 text-xl" />
+                <div>
+                  <p className="font-medium">CSV Import</p>
+                  <p className="text-sm text-muted-foreground">Bulk import users from CSV file</p>
+                </div>
+              </div>
+              <Button 
+                onClick={() => setCsvImportDialogOpen(true)}
+                data-testid="button-launch-csv-import"
+              >
+                Import
               </Button>
             </div>
-            <div className="text-sm text-muted-foreground">
-              <p className="font-medium mb-2">Required columns:</p>
-              <ul className="list-disc list-inside space-y-1">
-                <li>Email (required)</li>
-                <li>First Name (required)</li>
-                <li>Last Name (required)</li>
-                <li>Department (optional)</li>
-                <li>Role (optional)</li>
-                <li>Language (optional)</li>
-              </ul>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Azure Active Directory</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
+            
             <div className="flex items-center justify-between p-4 border border-border rounded-lg">
               <div className="flex items-center space-x-3">
                 <Computer className="text-blue-600 text-xl" />
@@ -199,31 +206,9 @@ export default function UserManagement() {
                 Connected
               </Badge>
             </div>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-sm font-medium mb-2">Directory ID</label>
-                <Input 
-                  value="12345678-1234-1234-1234-123456789012" 
-                  readOnly 
-                  className="bg-muted"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-2">Application ID</label>
-                <Input 
-                  value="87654321-4321-4321-4321-210987654321" 
-                  readOnly 
-                  className="bg-muted"
-                />
-              </div>
-              <Button className="w-full" variant="secondary" data-testid="button-sync-azure">
-                <Computer className="w-4 h-4 mr-2" />
-                Sync Now
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* User List */}
       <Card>
@@ -320,29 +305,71 @@ export default function UserManagement() {
                         </Badge>
                       </td>
                       <td className="p-4">
-                        <div className="flex items-center space-x-2">
-                          <Button 
-                            variant="ghost" 
-                            size="sm"
-                            data-testid={`button-edit-user-${user.id}`}
-                          >
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="sm"
-                            data-testid={`button-assign-course-${user.id}`}
-                          >
-                            <GraduationCap className="w-4 h-4" />
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="sm"
-                            data-testid={`button-send-phishing-${user.id}`}
-                          >
-                            <Fish className="w-4 h-4" />
-                          </Button>
-                        </div>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button 
+                              variant="ghost" 
+                              size="sm"
+                              data-testid={`button-user-actions-${user.id}`}
+                            >
+                              <MoreVertical className="w-4 h-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem 
+                              onClick={() => handleEditUser(user)}
+                              data-testid={`menu-edit-user-${user.id}`}
+                            >
+                              <Edit className="w-4 h-4 mr-2" />
+                              Edit User
+                            </DropdownMenuItem>
+                            <DropdownMenuItem data-testid={`menu-assign-course-${user.id}`}>
+                              <GraduationCap className="w-4 h-4 mr-2" />
+                              Assign Course
+                            </DropdownMenuItem>
+                            <DropdownMenuItem data-testid={`menu-send-phishing-${user.id}`}>
+                              <Fish className="w-4 h-4 mr-2" />
+                              Send Phishing Test
+                            </DropdownMenuItem>
+                            {user.id !== currentUser?.id && (
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <DropdownMenuItem
+                                    onSelect={(e) => e.preventDefault()}
+                                    className="text-destructive focus:text-destructive"
+                                    data-testid={`menu-delete-user-${user.id}`}
+                                  >
+                                    <Trash2 className="w-4 h-4 mr-2" />
+                                    {user.isActive ? 'Deactivate User' : 'Activate User'}
+                                  </DropdownMenuItem>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>
+                                      {user.isActive ? 'Deactivate User' : 'Activate User'}
+                                    </AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      {user.isActive 
+                                        ? `Are you sure you want to deactivate ${user.firstName} ${user.lastName}? They will no longer be able to access the system.`
+                                        : `Are you sure you want to reactivate ${user.firstName} ${user.lastName}? They will regain access to the system.`
+                                      }
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => handleDeleteUser(user.id)}
+                                      className={user.isActive ? 'bg-destructive hover:bg-destructive/90' : 'bg-green-600 hover:bg-green-700'}
+                                      data-testid={`confirm-delete-user-${user.id}`}
+                                    >
+                                      {user.isActive ? 'Deactivate' : 'Activate'}
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </td>
                     </tr>
                   ))
@@ -352,6 +379,20 @@ export default function UserManagement() {
           </div>
         </CardContent>
       </Card>
+      
+      {/* User Edit Dialog */}
+      <UserEditDialog
+        user={selectedUser}
+        isOpen={editDialogOpen}
+        onClose={handleCloseDialog}
+        mode={dialogMode}
+      />
+      
+      {/* CSV Import Dialog */}
+      <CSVImportDialog
+        isOpen={csvImportDialogOpen}
+        onClose={() => setCsvImportDialogOpen(false)}
+      />
     </div>
   );
 }
