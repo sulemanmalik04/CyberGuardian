@@ -39,14 +39,14 @@ const upload = multer({
     if (allowedMimes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('Invalid file type'), false);
+      cb(new Error('Invalid file type'));
     }
   }
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Auth middleware
-  const authenticateToken = async (req: Request, res: Response, next: NextFunction) => {
+  // SECURITY: Secure authentication middleware using JWT validation with audience checks
+  const createAuthMiddleware = (expectedAudience?: string) => async (req: Request, res: Response, next: NextFunction) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
 
@@ -55,22 +55,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      const session = await storage.getSession(token);
-      if (!session || session.expiresAt < new Date()) {
+      // CRITICAL SECURITY: Use proper JWT validation with audience checks and tenant isolation
+      const user = await authService.validateSession(token, expectedAudience);
+      
+      if (!user) {
         return res.status(403).json({ message: 'Invalid or expired token' });
       }
 
-      const user = await storage.getUser(session.userId);
+      // Store validated user and token on request for downstream use
+      (req as AuthenticatedRequest).user = user;
+      (req as AuthenticatedRequest).session = { 
+        id: `session-${user.id}-${Date.now()}`, 
+        token, 
+        userId: user.id, 
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+        createdAt: new Date()
+      };
+      
+      console.log(`✅ Authentication successful: ${user.email} (${user.role}) - Audience: ${expectedAudience || 'any'}`);
+      next();
+    } catch (error) {
+      console.error('🚨 Authentication error:', error);
+      return res.status(403).json({ message: 'Authentication failed' });
+    }
+  };
+
+  // Create audience-specific middleware for different user types
+  const authenticateToken = createAuthMiddleware(); // Generic auth (any role)
+  const authenticateSuperAdmin = createAuthMiddleware('super_admin');
+  const authenticateClientAdmin = createAuthMiddleware('client_admin'); 
+  const authenticateEndUser = createAuthMiddleware('end_user');
+  
+  // Combined admin middleware for routes that accept both super_admin and client_admin
+  const authenticateAdmin = async (req: Request, res: Response, next: NextFunction) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+      return res.status(401).json({ message: 'Access token required' });
+    }
+
+    try {
+      // Try super_admin first
+      let user = await authService.validateSession(token, 'super_admin');
+      
+      // If not super_admin, try client_admin
       if (!user) {
-        return res.status(403).json({ message: 'User not found' });
+        user = await authService.validateSession(token, 'client_admin');
+      }
+      
+      if (!user) {
+        return res.status(403).json({ message: 'Admin access required - invalid or expired token' });
+      }
+
+      // Ensure user has admin role
+      if (!['super_admin', 'client_admin'].includes(user.role)) {
+        return res.status(403).json({ message: 'Admin access required' });
       }
 
       (req as AuthenticatedRequest).user = user;
-      (req as AuthenticatedRequest).session = session;
+      (req as AuthenticatedRequest).session = {
+        id: `admin-session-${user.id}-${Date.now()}`,
+        token,
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+        createdAt: new Date()
+      };
+      
+      console.log(`✅ Admin authentication successful: ${user.email} (${user.role})`);
       next();
     } catch (error) {
-      console.error('Authentication error:', error);
-      return res.status(403).json({ message: 'Invalid token' });
+      console.error('🚨 Admin authentication error:', error);
+      return res.status(403).json({ message: 'Admin authentication failed' });
     }
   };
 
@@ -223,7 +279,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.end(pixel);
     } catch (error) {
       console.error('Tracking open error:', error);
-      console.error('Stack trace:', error.stack);
+      if (error instanceof Error) {
+        console.error('Stack trace:', error.stack);
+      }
       
       // Always return pixel to avoid breaking email display
       const pixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
@@ -682,7 +740,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // User management routes
-  app.get("/api/users", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+  app.get("/api/users", authenticateAdmin, async (req, res) => {
     try {
       let users;
       const authReq = req as AuthenticatedRequest;
@@ -712,7 +770,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/users", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+  app.post("/api/users", authenticateAdmin, async (req, res) => {
     try {
       const userData = insertUserSchema.parse(req.body);
       
@@ -854,7 +912,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   };
 
   // CSV Preview endpoint
-  app.post("/api/users/preview-csv", authenticateToken, requireRole(['client_admin']), upload.single('file'), async (req, res) => {
+  app.post("/api/users/preview-csv", authenticateClientAdmin, upload.single('file'), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded' });
@@ -924,7 +982,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Enhanced CSV Import endpoint
-  app.post("/api/users/import-csv", authenticateToken, requireRole(['client_admin']), upload.single('file'), async (req, res) => {
+  app.post("/api/users/import-csv", authenticateClientAdmin, upload.single('file'), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded' });
@@ -1051,7 +1109,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update user route
-  app.put("/api/users/:id", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+  app.put("/api/users/:id", authenticateAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       const updates = req.body;
@@ -1122,7 +1180,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Delete/deactivate user route
-  app.delete("/api/users/:id", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+  app.delete("/api/users/:id", authenticateAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       const authReq = req as AuthenticatedRequest;
@@ -1175,7 +1233,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Client management routes (Super Admin only)
-  app.get("/api/clients", authenticateToken, requireRole(['super_admin']), async (req, res) => {
+  app.get("/api/clients", authenticateSuperAdmin, async (req, res) => {
     try {
       const clients = await storage.getAllClients();
       res.json(clients);
@@ -1184,7 +1242,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/clients", authenticateToken, requireRole(['super_admin']), async (req, res) => {
+  app.post("/api/clients", authenticateSuperAdmin, async (req, res) => {
     try {
       const clientData = insertClientSchema.parse(req.body);
       const client = await storage.createClient(clientData);
@@ -1194,7 +1252,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/clients/:id", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+  app.put("/api/clients/:id", authenticateAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       
@@ -1232,7 +1290,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/courses", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+  app.post("/api/courses", authenticateAdmin, async (req, res) => {
     try {
       const courseData = insertCourseSchema.parse(req.body);
       const course = await storage.createCourse({
@@ -1245,7 +1303,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/courses/generate", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+  app.post("/api/courses/generate", authenticateAdmin, async (req, res) => {
     try {
       const { topic, difficulty, modules } = req.body;
       
@@ -1333,7 +1391,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Phishing campaign routes
-  app.get("/api/campaigns", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+  app.get("/api/campaigns", authenticateAdmin, async (req, res) => {
     try {
       let campaigns;
       const authReq = req as AuthenticatedRequest;
@@ -1349,7 +1407,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/campaigns", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+  app.post("/api/campaigns", authenticateAdmin, async (req, res) => {
     try {
       const campaignData = insertPhishingCampaignSchema.parse(req.body);
       
@@ -1369,7 +1427,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/campaigns/:id", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+  app.get("/api/campaigns/:id", authenticateAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       const campaign = await storage.getCampaign(id);
@@ -1390,7 +1448,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/campaigns/:id", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+  app.put("/api/campaigns/:id", authenticateAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       const campaign = await storage.getCampaign(id);
@@ -1418,7 +1476,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/campaigns/:id", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+  app.delete("/api/campaigns/:id", authenticateAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       const campaign = await storage.getCampaign(id);
@@ -1445,7 +1503,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/campaigns/:id/launch", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+  app.post("/api/campaigns/:id/launch", authenticateAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       const campaign = await storage.getCampaign(id);
@@ -1478,7 +1536,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/campaigns/:id/results", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+  app.get("/api/campaigns/:id/results", authenticateAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       const campaign = await storage.getCampaign(id);
@@ -1503,9 +1561,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           totalOpened: campaign.emailsOpened || 0,
           totalClicked: campaign.emailsClicked || 0,
           totalReported: campaign.emailsReported || 0,
-          openRate: campaign.emailsSent > 0 ? ((campaign.emailsOpened || 0) / campaign.emailsSent * 100).toFixed(2) : '0.00',
-          clickRate: campaign.emailsSent > 0 ? ((campaign.emailsClicked || 0) / campaign.emailsSent * 100).toFixed(2) : '0.00',
-          reportRate: campaign.emailsSent > 0 ? ((campaign.emailsReported || 0) / campaign.emailsSent * 100).toFixed(2) : '0.00'
+          openRate: (campaign.emailsSent || 0) > 0 ? ((campaign.emailsOpened || 0) / (campaign.emailsSent || 1) * 100).toFixed(2) : '0.00',
+          clickRate: (campaign.emailsSent || 0) > 0 ? ((campaign.emailsClicked || 0) / (campaign.emailsSent || 1) * 100).toFixed(2) : '0.00',
+          reportRate: (campaign.emailsSent || 0) > 0 ? ((campaign.emailsReported || 0) / (campaign.emailsSent || 1) * 100).toFixed(2) : '0.00'
         },
         events: analytics
       };
@@ -1572,7 +1630,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Analytics routes
-  app.get("/api/analytics", authenticateToken, async (req, res) => {
+  app.get("/api/analytics", authenticateAdmin, async (req, res) => {
     try {
       const { startDate, endDate } = req.query;
       let events;
@@ -1628,26 +1686,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // File upload routes
-  app.post("/api/upload/logo", authenticateToken, requireRole(['super_admin', 'client_admin']), upload.single('logo'), async (req, res) => {
+  app.post("/api/upload/logo", authenticateAdmin, upload.single('logo'), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded' });
       }
 
-      const logoUrl = await s3Service.uploadFile(req.file, 'logos');
+      const authReq = req as AuthenticatedRequest;
+      
+      // SECURITY: Ensure user has clientId for tenant-based operations
+      if (!authReq.user.clientId) {
+        return res.status(403).json({ message: 'User not associated with a client' });
+      }
+
+      // Use the secure uploadLogo method with proper clientId
+      const logoUrl = await s3Service.uploadLogo(req.file, authReq.user.clientId);
       
       // Update client branding
-      const authReq = req as AuthenticatedRequest;
-      if (authReq.user.clientId) {
-        const client = await storage.getClient(authReq.user.clientId);
-        if (client) {
-          await storage.updateClient(authReq.user.clientId, {
-            branding: {
-              ...client.branding,
-              logo: logoUrl
-            }
-          });
-        }
+      const client = await storage.getClient(authReq.user.clientId);
+      if (client) {
+        await storage.updateClient(authReq.user.clientId, {
+          branding: {
+            ...client.branding,
+            logo: logoUrl
+          }
+        });
       }
 
       res.json({ logoUrl });

@@ -8,7 +8,7 @@ export const userRoleEnum = pgEnum('user_role', ['super_admin', 'client_admin', 
 export const campaignStatusEnum = pgEnum('campaign_status', ['draft', 'scheduled', 'active', 'completed', 'paused']);
 export const licenseStatusEnum = pgEnum('license_status', ['active', 'expired', 'suspended']);
 export const courseStatusEnum = pgEnum('course_status', ['draft', 'published', 'archived']);
-export const eventTypeEnum = pgEnum('event_type', ['email_sent', 'email_opened', 'email_clicked', 'course_started', 'course_completed', 'quiz_completed', 'login', 'logout']);
+export const eventTypeEnum = pgEnum('event_type', ['email_sent', 'email_opened', 'email_clicked', 'course_started', 'course_completed', 'quiz_completed', 'login', 'logout', 'security_incident', 'phishing_reported', 'email_failed']);
 
 // Users table
 export const users = pgTable("users", {
