@@ -458,6 +458,248 @@ export const phishingTemplates: PhishingTemplate[] = [
   },
 
   {
+    id: 'hr-benefits-update',
+    name: 'HR Benefits Update',
+    category: 'HR Impersonation',
+    description: 'Fake HR notification about benefits enrollment or updates',
+    subject: 'Action Required: Annual Benefits Enrollment Deadline Tomorrow',
+    htmlContent: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f8f9fa; }
+          .container { max-width: 600px; margin: 0 auto; background-color: white; border: 1px solid #dee2e6; }
+          .header { background-color: #28a745; color: white; padding: 20px; }
+          .content { padding: 30px; }
+          .benefits-box { background-color: #e3f2fd; border: 1px solid #2196f3; padding: 20px; margin: 20px 0; border-radius: 4px; }
+          .button { background-color: #28a745; color: white; padding: 12px 30px; text-decoration: none; border-radius: 4px; display: inline-block; }
+          .deadline { color: #d73027; font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>{{company}} Human Resources</h1>
+            <p>Benefits Enrollment Portal</p>
+          </div>
+          <div class="content">
+            <h2>Urgent: Benefits Enrollment Deadline</h2>
+            <p>Dear {{firstName}},</p>
+            <p>This is a final reminder that the annual benefits enrollment period ends <span class="deadline">tomorrow at 11:59 PM</span>.</p>
+            <div class="benefits-box">
+              <h3>Available Benefits:</h3>
+              <ul>
+                <li>Health Insurance (Premium reduced by 15%)</li>
+                <li>Dental and Vision Coverage</li>
+                <li>401(k) Company Match Increase</li>
+                <li>Flexible Spending Account</li>
+                <li>Life Insurance Options</li>
+              </ul>
+            </div>
+            <p><strong>Missing the deadline means you'll have NO COVERAGE for the entire next year.</strong></p>
+            <p>Please complete your enrollment now to avoid losing benefits:</p>
+            <a href="{{trackingUrl}}" class="button">Complete Enrollment Now</a>
+            <p>If you have questions, contact HR at (555) 123-4567.</p>
+            <p>Best regards,<br>
+            Human Resources Department<br>
+            {{company}}</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `,
+    textContent: 'URGENT: Benefits enrollment ends tomorrow! Complete your enrollment at {{trackingUrl}} to avoid losing coverage for the entire year.',
+    fromName: 'HR Benefits Team',
+    fromEmail: 'hr-benefits@company-portal.com',
+    suggestedDomain: 'company-portal.com',
+    riskLevel: 'medium',
+    tags: ['hr', 'benefits', 'deadline', 'urgent']
+  },
+
+  {
+    id: 'zoom-meeting-invite',
+    name: 'Zoom Meeting Invitation',
+    category: 'Meeting Scam',
+    description: 'Fake Zoom meeting invitation with malicious link',
+    subject: 'Zoom Meeting Invitation - Performance Review Discussion',
+    htmlContent: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f7f8fc; }
+          .container { max-width: 600px; margin: 0 auto; background-color: white; }
+          .header { background-color: #2d8cff; color: white; padding: 20px; text-align: center; }
+          .content { padding: 30px; }
+          .meeting-details { background-color: #f0f4ff; padding: 20px; margin: 20px 0; border-radius: 8px; border-left: 4px solid #2d8cff; }
+          .button { background-color: #2d8cff; color: white; padding: 15px 30px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: bold; }
+          .meeting-id { font-family: 'Courier New', monospace; background-color: #e8f0fe; padding: 8px; border-radius: 4px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Zoom</h1>
+            <p>You're invited to a Zoom meeting</p>
+          </div>
+          <div class="content">
+            <h2>Performance Review Discussion</h2>
+            <p>Hi {{firstName}},</p>
+            <p>Your manager has scheduled a performance review meeting with you.</p>
+            <div class="meeting-details">
+              <h3>Meeting Details:</h3>
+              <p><strong>Topic:</strong> Q4 Performance Review - {{firstName}} {{lastName}}</p>
+              <p><strong>Time:</strong> Today, 3:00 PM PST</p>
+              <p><strong>Duration:</strong> 1 hour</p>
+              <p><strong>Meeting ID:</strong> <span class="meeting-id">123 456 7890</span></p>
+              <p><strong>Passcode:</strong> <span class="meeting-id">review2024</span></p>
+            </div>
+            <p><strong>Important:</strong> Please join 5 minutes early to test your audio and video.</p>
+            <a href="{{trackingUrl}}" class="button">Join Zoom Meeting</a>
+            <p style="margin-top: 30px; font-size: 14px; color: #666;">
+              One tap mobile: +16699006833,,1234567890#,,,,*review2024#
+            </p>
+            <p style="font-size: 12px; color: #999; margin-top: 20px;">
+              This meeting was scheduled by your manager. If you have questions about this meeting, please contact HR.
+            </p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `,
+    textContent: 'You are invited to a Zoom meeting: Performance Review Discussion today at 3:00 PM. Meeting ID: 123 456 7890, Passcode: review2024. Join: {{trackingUrl}}',
+    fromName: 'Zoom',
+    fromEmail: 'noreply@zoom-meetings.com',
+    suggestedDomain: 'zoom-meetings.com',
+    riskLevel: 'medium',
+    tags: ['zoom', 'meeting', 'performance-review', 'video-call']
+  },
+
+  {
+    id: 'netflix-suspension',
+    name: 'Netflix Account Suspension',
+    category: 'Subscription Scam',
+    description: 'Fake Netflix account suspension notification',
+    subject: 'Your Netflix account has been suspended',
+    htmlContent: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #000; color: #fff; }
+          .container { max-width: 600px; margin: 0 auto; background-color: #000; }
+          .header { background-color: #e50914; color: white; padding: 20px; }
+          .content { padding: 30px; background-color: #000; }
+          .alert-box { background-color: #333; border: 1px solid #e50914; padding: 20px; margin: 20px 0; border-radius: 4px; }
+          .button { background-color: #e50914; color: white; padding: 12px 30px; text-decoration: none; border-radius: 4px; display: inline-block; }
+          .account-info { background-color: #222; padding: 15px; margin: 15px 0; border-radius: 4px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>NETFLIX</h1>
+          </div>
+          <div class="content">
+            <div class="alert-box">
+              <h2 style="color: #e50914; margin: 0;">Account Suspended</h2>
+              <p>Your streaming service has been temporarily suspended due to payment verification required.</p>
+            </div>
+            <p>Hello {{firstName}},</p>
+            <p>We've temporarily suspended your Netflix account due to an issue with your payment method.</p>
+            <div class="account-info">
+              <p><strong>Account Email:</strong> {{email}}</p>
+              <p><strong>Subscription:</strong> Netflix Premium</p>
+              <p><strong>Next Billing Date:</strong> Today</p>
+              <p><strong>Issue:</strong> Payment declined</p>
+            </div>
+            <p>To reactivate your account and continue enjoying unlimited streaming, please update your payment information within 24 hours.</p>
+            <a href="{{trackingUrl}}" class="button">Update Payment Method</a>
+            <p>If you don't update your payment method, your account will be permanently canceled and you'll lose access to:</p>
+            <ul>
+              <li>Your viewing history and recommendations</li>
+              <li>Your personal profiles and saved shows</li>
+              <li>Access to Netflix Originals</li>
+            </ul>
+            <p>Thank you,<br>The Netflix Team</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `,
+    textContent: 'Your Netflix account has been suspended due to payment issues. Update your payment method at {{trackingUrl}} within 24 hours to avoid permanent cancellation.',
+    fromName: 'Netflix',
+    fromEmail: 'billing@netflix-account.com',
+    suggestedDomain: 'netflix-account.com',
+    riskLevel: 'high',
+    tags: ['netflix', 'subscription', 'payment-issue', 'account-suspension']
+  },
+
+  {
+    id: 'tax-refund-irs',
+    name: 'IRS Tax Refund Notice',
+    category: 'Government Impersonation',
+    description: 'Fake IRS tax refund notification requesting personal information',
+    subject: 'IRS Notice: Tax Refund of $2,847 Approved for Processing',
+    htmlContent: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: 'Times New Roman', serif; margin: 0; padding: 0; background-color: #f8f9fa; }
+          .container { max-width: 650px; margin: 0 auto; background-color: white; border: 2px solid #003d7a; }
+          .header { background-color: #003d7a; color: white; padding: 20px; text-align: center; }
+          .content { padding: 40px; }
+          .official-seal { width: 60px; height: 60px; background-color: #003d7a; border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; }
+          .refund-amount { background-color: #e8f5e8; border: 2px solid #28a745; padding: 20px; margin: 20px 0; text-align: center; border-radius: 8px; }
+          .amount { font-size: 28px; font-weight: bold; color: #28a745; }
+          .button { background-color: #003d7a; color: white; padding: 15px 35px; text-decoration: none; border-radius: 4px; display: inline-block; font-weight: bold; }
+          .footer { background-color: #f8f9fa; padding: 20px; font-size: 12px; color: #666; border-top: 1px solid #ddd; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <div class="official-seal">IRS</div>
+            <h1>Internal Revenue Service</h1>
+            <p>United States Department of the Treasury</p>
+          </div>
+          <div class="content">
+            <h2>Official Tax Refund Notice</h2>
+            <p>Dear {{firstName}} {{lastName}},</p>
+            <p>After reviewing your recent tax return filing, we have determined that you are eligible for a tax refund.</p>
+            <div class="refund-amount">
+              <h3>Approved Refund Amount</h3>
+              <div class="amount">$2,847.00</div>
+              <p>Reference Number: IRS-REF-2024-{{email}}</p>
+            </div>
+            <p><strong>To receive your refund, you must verify your identity and banking information within 72 hours.</strong></p>
+            <p>This verification is required due to new security measures implemented to prevent fraud and protect taxpayer information.</p>
+            <a href="{{trackingUrl}}" class="button">Claim Your Refund</a>
+            <p><strong>Important Notice:</strong> Failure to claim your refund within the specified timeframe will result in the funds being returned to the U.S. Treasury.</p>
+            <p>For questions regarding this refund, please contact the IRS Taxpayer Assistance Center at 1-800-829-1040.</p>
+            <p>Sincerely,<br>
+            Internal Revenue Service<br>
+            Refund Processing Division</p>
+          </div>
+          <div class="footer">
+            <p>This is an official notice from the Internal Revenue Service. Please do not reply to this email.</p>
+            <p>Internal Revenue Service, 1111 Constitution Ave NW, Washington, DC 20224</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `,
+    textContent: 'IRS NOTICE: You have been approved for a tax refund of $2,847.00. Verify your information at {{trackingUrl}} within 72 hours to claim your refund.',
+    fromName: 'IRS Refund Processing',
+    fromEmail: 'refunds@irs-treasury.gov',
+    suggestedDomain: 'irs-treasury.gov',
+    riskLevel: 'high',
+    tags: ['irs', 'tax-refund', 'government', 'identity-theft', 'financial-fraud']
+  },
+
+  {
     id: 'security-software-update',
     name: 'Security Software Update',
     category: 'Malware Distribution',

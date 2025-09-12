@@ -9,6 +9,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
 import { 
   Plus, 
@@ -21,9 +23,131 @@ import {
   Calendar,
   Clock,
   Rocket,
-  Edit
+  Edit,
+  AlertTriangle,
+  Building2,
+  CreditCard,
+  Package,
+  Users,
+  Zap
 } from 'lucide-react';
 import { api, type PhishingCampaign, type User } from '@/lib/api';
+
+// Enhanced phishing templates based on realistic attack scenarios
+const phishingTemplates = [
+  {
+    id: 'office365-login',
+    name: 'Office 365 Security Alert',
+    category: 'Credential Harvesting',
+    description: 'Fake Office 365 login notification requesting immediate action',
+    icon: Building2,
+    color: 'bg-blue-500',
+    riskLevel: 'high' as const,
+    subject: 'Your Office 365 account will be suspended',
+    fromName: 'Microsoft Security',
+    fromEmail: 'security@microsoft-alerts.com',
+    suggestedDomain: 'microsoft-alerts.com',
+    preview: 'We\'ve detected unusual sign-in activity on your Office 365 account. Your account will be suspended in 24 hours unless you verify your credentials.'
+  },
+  {
+    id: 'banking-security',
+    name: 'Bank Security Alert', 
+    category: 'Financial Fraud',
+    description: 'Fake banking security alert requesting immediate verification',
+    icon: CreditCard,
+    color: 'bg-red-500',
+    riskLevel: 'high' as const,
+    subject: 'Urgent: Suspicious Activity Detected on Your Account',
+    fromName: 'Security Team',
+    fromEmail: 'security@secure-bank-alerts.com',
+    suggestedDomain: 'secure-bank-alerts.com',
+    preview: 'We have detected suspicious activity on your account. Please verify your identity immediately to prevent account suspension.'
+  },
+  {
+    id: 'hr-benefits',
+    name: 'HR Benefits Update',
+    category: 'HR Impersonation', 
+    description: 'HR benefits enrollment deadline with urgent action required',
+    icon: Users,
+    color: 'bg-green-500',
+    riskLevel: 'medium' as const,
+    subject: 'URGENT: Benefits Enrollment Deadline - Action Required',
+    fromName: 'HR Benefits Team',
+    fromEmail: 'benefits@company-hr.com',
+    suggestedDomain: 'company-hr.com',
+    preview: 'Your benefits enrollment deadline is today. You must complete your enrollment by 5:00 PM to avoid losing coverage.'
+  },
+  {
+    id: 'zoom-meeting',
+    name: 'Zoom Meeting Invitation',
+    category: 'Meeting Impersonation',
+    description: 'Fake meeting invitation for performance review or urgent discussion',
+    icon: Zap,
+    color: 'bg-blue-400',
+    riskLevel: 'medium' as const,
+    subject: 'Meeting Invitation: Performance Review - Tomorrow 2:00 PM',
+    fromName: 'Sarah Johnson',
+    fromEmail: 'sarah.johnson@company.com',
+    suggestedDomain: 'company-meetings.com',
+    preview: 'Hi! I\'ve scheduled a performance review meeting for tomorrow at 2:00 PM. Please click the link below to join the meeting.'
+  },
+  {
+    id: 'netflix-suspension',
+    name: 'Netflix Account Suspension',
+    category: 'Subscription Scam',
+    description: 'Fake Netflix suspension notice requiring payment update',
+    icon: Eye,
+    color: 'bg-red-600',
+    riskLevel: 'medium' as const,
+    subject: 'Your Netflix account has been suspended',
+    fromName: 'Netflix',
+    fromEmail: 'account@netflix-billing.com',
+    suggestedDomain: 'netflix-billing.com',
+    preview: 'We were unable to process your payment. Your account has been suspended. Please update your payment information to restore access.'
+  },
+  {
+    id: 'irs-refund',
+    name: 'IRS Tax Refund Notice',
+    category: 'Government Impersonation',
+    description: 'Fake IRS communication about tax refund requiring personal information',
+    icon: AlertTriangle,
+    color: 'bg-yellow-600',
+    riskLevel: 'high' as const,
+    subject: 'IRS Notice: You have a pending tax refund of $2,847',
+    fromName: 'Internal Revenue Service',
+    fromEmail: 'refunds@irs-treasury.gov',
+    suggestedDomain: 'irs-treasury.gov',
+    preview: 'You have a pending federal tax refund. Click below to verify your information and claim your refund before it expires.'
+  },
+  {
+    id: 'it-password-expire',
+    name: 'IT Password Expiration',
+    category: 'IT Support',
+    description: 'Password expiration notice requiring immediate action',
+    icon: Shield,
+    color: 'bg-orange-500',
+    riskLevel: 'medium' as const,
+    subject: 'Password Expiration Notice - Action Required',
+    fromName: 'IT Support',
+    fromEmail: 'support@company-it.com',
+    suggestedDomain: 'company-it.com',
+    preview: 'Your password will expire in 24 hours. Please update your credentials to maintain access to company systems.'
+  },
+  {
+    id: 'package-delivery',
+    name: 'Package Delivery Failed',
+    category: 'Package Delivery',
+    description: 'Failed delivery notification requiring rescheduling',
+    icon: Package,
+    color: 'bg-brown-500',
+    riskLevel: 'low' as const,
+    subject: 'Package Delivery Attempt Failed - Reschedule Required',
+    fromName: 'UPS Delivery',
+    fromEmail: 'delivery@ups-notifications.com',
+    suggestedDomain: 'ups-notifications.com',
+    preview: 'We attempted to deliver your package but no one was available. Please click below to reschedule your delivery.'
+  }
+];
 
 export default function PhishingCampaigns() {
   const { user: currentUser } = useAuth();
@@ -31,11 +155,13 @@ export default function PhishingCampaigns() {
   const queryClient = useQueryClient();
   
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<typeof phishingTemplates[0] | null>(null);
+  const [showTemplatePreview, setShowTemplatePreview] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
-    domain: 'secure-bank-update.com',
+    domain: '',
     targetGroups: [] as string[],
-    template: 'banking',
+    template: '',
     scheduledDate: '',
     scheduledTime: ''
   });
@@ -62,12 +188,13 @@ export default function PhishingCampaigns() {
       setShowCreateForm(false);
       setFormData({
         name: '',
-        domain: 'secure-bank-update.com',
+        domain: '',
         targetGroups: [],
-        template: 'banking',
+        template: '',
         scheduledDate: '',
         scheduledTime: ''
       });
+      setSelectedTemplate(null);
       queryClient.invalidateQueries({ queryKey: ['campaigns'] });
     },
     onError: (error: any) => {
@@ -109,15 +236,15 @@ export default function PhishingCampaigns() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
+    const template = getTemplateData(formData.template);
     const campaignData = {
       name: formData.name,
       template: {
-        subject: getTemplateData(formData.template).subject,
-        htmlContent: getTemplateData(formData.template).htmlContent,
-        textContent: getTemplateData(formData.template).textContent,
-        fromName: getTemplateData(formData.template).fromName,
-        fromEmail: getTemplateData(formData.template).fromEmail,
-        domain: formData.domain
+        subject: template.subject,
+        fromName: template.fromName,
+        fromEmail: template.fromEmail,
+        domain: formData.domain,
+        templateId: template.id
       },
       targetGroups: formData.targetGroups,
       scheduledAt: formData.scheduledDate && formData.scheduledTime ? 
@@ -128,69 +255,61 @@ export default function PhishingCampaigns() {
     createCampaignMutation.mutate(campaignData);
   };
 
-  const getTemplateData = (templateType: string) => {
-    const templates = {
-      banking: {
-        subject: 'Urgent: Suspicious Activity Detected on Your Account',
-        fromName: 'Security Team',
-        fromEmail: 'security@secure-bank-update.com',
-        htmlContent: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px;">
-            <h2 style="color: #d32f2f;">Security Alert</h2>
-            <p>Dear {{firstName}},</p>
-            <p>We have detected suspicious activity on your account. Please verify your identity immediately to prevent account suspension.</p>
-            <p><a href="{{trackingUrl}}" style="background: #1976d2; color: white; padding: 12px 24px; text-decoration: none;">Verify Account</a></p>
-            <p>Thank you,<br>Security Team</p>
-          </div>
-        `,
-        textContent: 'Security Alert: Suspicious activity detected. Please verify your account.'
-      },
-      'it-support': {
-        subject: 'Password Expiration Notice - Action Required',
-        fromName: 'IT Support',
-        fromEmail: 'support@company-it.com',
-        htmlContent: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px;">
-            <h2>Password Expiration Notice</h2>
-            <p>Hello {{firstName}},</p>
-            <p>Your password will expire in 24 hours. Please update your credentials to maintain access.</p>
-            <p><a href="{{trackingUrl}}" style="background: #f57c00; color: white; padding: 12px 24px; text-decoration: none;">Update Password</a></p>
-            <p>IT Support Team</p>
-          </div>
-        `,
-        textContent: 'Your password expires soon. Please update your credentials.'
-      },
-      delivery: {
-        subject: 'Package Delivery Attempt Failed',
-        fromName: 'Delivery Service',
-        fromEmail: 'delivery@quick-ship.com',
-        htmlContent: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px;">
-            <h2>Delivery Attempt Failed</h2>
-            <p>Dear {{firstName}},</p>
-            <p>We attempted to deliver your package but no one was available. Please reschedule delivery.</p>
-            <p><a href="{{trackingUrl}}" style="background: #388e3c; color: white; padding: 12px 24px; text-decoration: none;">Reschedule Delivery</a></p>
-            <p>Quick Ship Delivery</p>
-          </div>
-        `,
-        textContent: 'Delivery failed. Please reschedule your package delivery.'
-      }
-    };
-    return templates[templateType as keyof typeof templates] || templates.banking;
+  const getTemplateData = (templateId: string) => {
+    const template = phishingTemplates.find(t => t.id === templateId);
+    if (!template) return phishingTemplates[0]; // fallback to first template
+    return template;
+  };
+
+  const handleTemplateSelect = (template: typeof phishingTemplates[0]) => {
+    setSelectedTemplate(template);
+    setFormData(prev => ({
+      ...prev,
+      template: template.id,
+      domain: template.suggestedDomain
+    }));
+  };
+
+  const getRiskLevelColor = (level: string) => {
+    switch (level) {
+      case 'high': return 'bg-red-100 text-red-800 border-red-200';
+      case 'medium': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+      case 'low': return 'bg-green-100 text-green-800 border-green-200';
+      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'active':
-        return 'bg-blue-100 text-blue-800';
+        return 'bg-blue-100 text-blue-800 border-blue-200';
       case 'completed':
-        return 'bg-green-100 text-green-800';
+        return 'bg-green-100 text-green-800 border-green-200';
       case 'draft':
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-gray-100 text-gray-800 border-gray-200';
       case 'paused':
-        return 'bg-yellow-100 text-yellow-800';
+        return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+      case 'scheduled':
+        return 'bg-purple-100 text-purple-800 border-purple-200';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'active':
+        return <Zap className="w-4 h-4" />;
+      case 'completed':
+        return <Shield className="w-4 h-4" />;
+      case 'draft':
+        return <Edit className="w-4 h-4" />;
+      case 'paused':
+        return <Clock className="w-4 h-4" />;
+      case 'scheduled':
+        return <Calendar className="w-4 h-4" />;
+      default:
+        return <Square className="w-4 h-4" />;
     }
   };
 
@@ -322,15 +441,29 @@ export default function PhishingCampaigns() {
                       onValueChange={(value) => setFormData(prev => ({ ...prev, domain: value }))}
                     >
                       <SelectTrigger data-testid="select-phishing-domain">
-                        <SelectValue />
+                        <SelectValue placeholder={selectedTemplate ? `Suggested: ${selectedTemplate.suggestedDomain}` : 'Select a template first'} />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="secure-bank-update.com">secure-bank-update.com</SelectItem>
-                        <SelectItem value="microsoft-security-alert.net">microsoft-security-alert.net</SelectItem>
-                        <SelectItem value="paypal-verification.org">paypal-verification.org</SelectItem>
-                        <SelectItem value="amazon-account-suspended.co">amazon-account-suspended.co</SelectItem>
+                        {selectedTemplate && (
+                          <SelectItem value={selectedTemplate.suggestedDomain}>
+                            {selectedTemplate.suggestedDomain} (Recommended)
+                          </SelectItem>
+                        )}
+                        <SelectItem value="secure-bank-alerts.com">secure-bank-alerts.com</SelectItem>
+                        <SelectItem value="microsoft-alerts.com">microsoft-alerts.com</SelectItem>
+                        <SelectItem value="company-hr.com">company-hr.com</SelectItem>
+                        <SelectItem value="company-it.com">company-it.com</SelectItem>
+                        <SelectItem value="netflix-billing.com">netflix-billing.com</SelectItem>
+                        <SelectItem value="irs-treasury.gov">irs-treasury.gov</SelectItem>
+                        <SelectItem value="ups-notifications.com">ups-notifications.com</SelectItem>
+                        <SelectItem value="company-meetings.com">company-meetings.com</SelectItem>
                       </SelectContent>
                     </Select>
+                    {selectedTemplate && formData.domain === selectedTemplate.suggestedDomain && (
+                      <p className="text-xs text-green-600 mt-1">
+                        ✓ Using recommended domain for maximum realism
+                      </p>
+                    )}
                   </div>
 
                   <div>
@@ -401,45 +534,114 @@ export default function PhishingCampaigns() {
                 <div className="space-y-4">
                   <div>
                     <Label>Email Template</Label>
-                    <div className="space-y-3 mt-2">
-                      {[
-                        { id: 'banking', title: 'Banking Security Alert', desc: 'Suspicious activity detected on your account. Click to verify your identity.' },
-                        { id: 'it-support', title: 'IT Support Request', desc: 'Your password will expire soon. Update your credentials to maintain access.' },
-                        { id: 'delivery', title: 'Package Delivery', desc: 'We attempted to deliver your package. Click to reschedule delivery.' }
-                      ].map(template => (
-                        <div
-                          key={template.id}
-                          className={`p-4 border rounded-lg cursor-pointer transition-colors ${
-                            formData.template === template.id 
-                              ? 'border-primary bg-primary/5' 
-                              : 'border-border hover:bg-muted/30'
-                          }`}
-                          onClick={() => setFormData(prev => ({ ...prev, template: template.id }))}
-                          data-testid={`template-${template.id}`}
-                        >
-                          <div className="flex items-center justify-between mb-2">
-                            <h4 className="font-medium text-sm">{template.title}</h4>
-                            <div className={`w-4 h-4 rounded-full border-2 ${
-                              formData.template === template.id 
-                                ? 'border-primary bg-primary' 
-                                : 'border-muted-foreground'
-                            }`} />
+                    <div className="grid grid-cols-1 gap-3 mt-2">
+                      {phishingTemplates.map(template => {
+                        const Icon = template.icon;
+                        const isSelected = formData.template === template.id;
+                        return (
+                          <div
+                            key={template.id}
+                            className={`p-4 border rounded-lg cursor-pointer transition-all hover:shadow-md ${
+                              isSelected
+                                ? 'border-primary bg-primary/5 ring-2 ring-primary/20' 
+                                : 'border-border hover:bg-muted/30'
+                            }`}
+                            onClick={() => handleTemplateSelect(template)}
+                            data-testid={`template-${template.id}`}
+                          >
+                            <div className="flex items-start space-x-3">
+                              <div className={`p-2 rounded-lg ${template.color} bg-opacity-20`}>
+                                <Icon className={`w-5 h-5 ${template.color.replace('bg-', 'text-')}`} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between mb-1">
+                                  <h4 className="font-semibold text-sm">{template.name}</h4>
+                                  <div className="flex items-center space-x-2">
+                                    <Badge className={`${getRiskLevelColor(template.riskLevel)} text-xs px-2 py-1`}>
+                                      {template.riskLevel}
+                                    </Badge>
+                                    <div className={`w-4 h-4 rounded-full border-2 ${
+                                      isSelected
+                                        ? 'border-primary bg-primary' 
+                                        : 'border-muted-foreground'
+                                    }`} />
+                                  </div>
+                                </div>
+                                <p className="text-xs text-muted-foreground mb-2">{template.category}</p>
+                                <p className="text-xs text-muted-foreground leading-relaxed">
+                                  {template.preview}
+                                </p>
+                              </div>
+                            </div>
+                            {isSelected && (
+                              <div className="mt-3 pt-3 border-t border-primary/20">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-muted-foreground">Subject: {template.subject}</span>
+                                  <Dialog>
+                                    <DialogTrigger asChild>
+                                      <Button variant="outline" size="sm" className="h-6 text-xs">
+                                        <Eye className="w-3 h-3 mr-1" />
+                                        Preview
+                                      </Button>
+                                    </DialogTrigger>
+                                    <DialogContent className="max-w-2xl max-h-[80vh]">
+                                      <DialogHeader>
+                                        <DialogTitle>{template.name} - Email Preview</DialogTitle>
+                                      </DialogHeader>
+                                      <ScrollArea className="h-96">
+                                        <div className="p-4 bg-muted/30 rounded-lg">
+                                          <div className="mb-4 text-sm space-y-1">
+                                            <div><strong>From:</strong> {template.fromName} &lt;{template.fromEmail}&gt;</div>
+                                            <div><strong>Subject:</strong> {template.subject}</div>
+                                            <div><strong>Risk Level:</strong> 
+                                              <Badge className={`ml-2 ${getRiskLevelColor(template.riskLevel)}`}>
+                                                {template.riskLevel}
+                                              </Badge>
+                                            </div>
+                                          </div>
+                                          <hr className="my-4" />
+                                          <div className="prose prose-sm max-w-none">
+                                            <p>{template.preview}</p>
+                                            <p className="text-primary underline cursor-pointer">[Phishing Link - Click Here]</p>
+                                            <p className="text-xs text-muted-foreground mt-4">
+                                              This is a preview of the phishing email template. The actual email will contain personalized content and tracking links.
+                                            </p>
+                                          </div>
+                                        </div>
+                                      </ScrollArea>
+                                    </DialogContent>
+                                  </Dialog>
+                                </div>
+                              </div>
+                            )}
                           </div>
-                          <p className="text-xs text-muted-foreground">{template.desc}</p>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                   
-                  <Button 
-                    type="button" 
-                    variant="outline" 
-                    className="w-full"
-                    data-testid="button-customize-template"
-                  >
-                    <Edit className="w-4 h-4 mr-2" />
-                    Customize Template (WYSIWYG)
-                  </Button>
+                  {selectedTemplate && (
+                    <div className="space-y-3">
+                      <div className="p-3 bg-muted/30 rounded-lg">
+                        <h4 className="text-sm font-medium mb-2">Selected Template Details</h4>
+                        <div className="space-y-1 text-xs text-muted-foreground">
+                          <div>From: {selectedTemplate.fromName} &lt;{selectedTemplate.fromEmail}&gt;</div>
+                          <div>Domain: {selectedTemplate.suggestedDomain}</div>
+                          <div>Category: {selectedTemplate.category}</div>
+                        </div>
+                      </div>
+                      <Button 
+                        type="button" 
+                        variant="outline" 
+                        className="w-full"
+                        disabled
+                        data-testid="button-customize-template"
+                      >
+                        <Edit className="w-4 h-4 mr-2" />
+                        Customize Template (Coming Soon)
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
               
@@ -546,9 +748,18 @@ export default function PhishingCampaigns() {
                         </span>
                       </td>
                       <td className="p-4">
-                        <Badge className={getStatusColor(campaign.status)}>
-                          {campaign.status}
-                        </Badge>
+                        <div className="flex items-center space-x-2">
+                          <Badge className={`${getStatusColor(campaign.status)} border flex items-center space-x-1`}>
+                            {getStatusIcon(campaign.status)}
+                            <span className="capitalize">{campaign.status}</span>
+                          </Badge>
+                          {campaign.status === 'active' && (
+                            <div className="flex items-center space-x-1 text-xs text-muted-foreground">
+                              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                              <span>Live</span>
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="p-4">
                         <div className="flex items-center space-x-2">

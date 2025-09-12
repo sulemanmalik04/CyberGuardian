@@ -147,38 +147,37 @@ export default function PhishingAnalytics({ dateRange = '30', filters = {} }: Ph
   };
 
   // Calculate phishing metrics
+  const totalEmailsSent = phishingEvents.filter(e => e.eventType === 'email_sent').length;
+  const emailsOpened = phishingEvents.filter(e => e.eventType === 'email_opened').length;
+  const emailsClicked = phishingEvents.filter(e => e.eventType === 'email_clicked').length;
+  const emailsReported = phishingEvents.filter(e => e.eventType === 'phishing_reported').length;
+  
   const phishingMetrics = {
-    totalEmailsSent: phishingEvents.filter(e => e.eventType === 'email_sent').length,
-    emailsOpened: phishingEvents.filter(e => e.eventType === 'email_opened').length,
-    emailsClicked: phishingEvents.filter(e => e.eventType === 'email_clicked').length,
-    emailsReported: phishingEvents.filter(e => e.eventType === 'phishing_reported').length,
-    openRate: calculateOpenRate(),
-    clickRate: calculateClickRate(),
-    reportRate: calculateReportRate(),
-    vulnerabilityScore: calculateVulnerabilityScore()
+    totalEmailsSent,
+    emailsOpened,
+    emailsClicked,
+    emailsReported,
+    openRate: calculateOpenRate(totalEmailsSent, emailsOpened),
+    clickRate: calculateClickRate(totalEmailsSent, emailsClicked),
+    reportRate: calculateReportRate(emailsClicked, emailsReported),
+    vulnerabilityScore: calculateVulnerabilityScore(totalEmailsSent, emailsClicked, emailsReported)
   };
 
-  function calculateOpenRate() {
-    const sent = phishingMetrics.totalEmailsSent;
-    const opened = phishingMetrics.emailsOpened;
+  function calculateOpenRate(sent: number, opened: number): number {
     return sent > 0 ? Math.round((opened / sent) * 100 * 10) / 10 : 0;
   }
 
-  function calculateClickRate() {
-    const sent = phishingMetrics.totalEmailsSent;
-    const clicked = phishingMetrics.emailsClicked;
+  function calculateClickRate(sent: number, clicked: number): number {
     return sent > 0 ? Math.round((clicked / sent) * 100 * 10) / 10 : 0;
   }
 
-  function calculateReportRate() {
-    const clicked = phishingMetrics.emailsClicked;
-    const reported = phishingMetrics.emailsReported;
+  function calculateReportRate(clicked: number, reported: number): number {
     return clicked > 0 ? Math.round((reported / clicked) * 100 * 10) / 10 : 0;
   }
 
-  function calculateVulnerabilityScore() {
-    const clickRate = calculateClickRate();
-    const reportRate = calculateReportRate();
+  function calculateVulnerabilityScore(sent: number, clicked: number, reported: number): number {
+    const clickRate = calculateClickRate(sent, clicked);
+    const reportRate = calculateReportRate(clicked, reported);
     
     // Higher click rate = higher vulnerability, higher report rate = lower vulnerability
     const vulnerabilityScore = clickRate - (reportRate * 0.5);
