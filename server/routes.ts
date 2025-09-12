@@ -13,6 +13,8 @@ import jwt from "jsonwebtoken";
 import multer from "multer";
 import csvParser from "csv-parser";
 import { Readable } from "stream";
+import crypto from "crypto";
+import { verify } from "@noble/ed25519";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -55,108 +57,517 @@ export async function registerRoutes(app: Express): Promise<Server> {
     next();
   };
 
-  // Email tracking routes (before authentication routes to avoid middleware)
-  app.get("/api/tracking/open/:trackingId", async (req, res) => {
+  // Rate limiting for tracking endpoints
+  const trackingLimiter = new Map();
+  const TRACKING_LIMIT = 100; // requests per hour per IP
+  const TRACKING_WINDOW = 60 * 60 * 1000; // 1 hour
+
+  const checkRateLimit = (ip: string): boolean => {
+    const now = Date.now();
+    const key = ip;
+    const requests = trackingLimiter.get(key) || [];
+    
+    // Clean old requests
+    const validRequests = requests.filter((time: number) => now - time < TRACKING_WINDOW);
+    
+    if (validRequests.length >= TRACKING_LIMIT) {
+      return false;
+    }
+    
+    validRequests.push(now);
+    trackingLimiter.set(key, validRequests);
+    return true;
+  };
+
+  // Allowed redirect domains for click tracking security
+  const ALLOWED_REDIRECT_DOMAINS = [
+    'localhost:5000',
+    'localhost:3000', 
+    'example.com',
+    'demo.com'
+  ];
+
+  const validateRedirectUrl = (url: string): boolean => {
     try {
-      const { trackingId } = req.params;
+      // CRITICAL SECURITY FIX: ONLY allow relative paths - no external redirects allowed
+      // This completely prevents open redirect attacks
+      if (url.startsWith('/')) {
+        // Additional security: prevent protocol-relative URLs like "//evil.com"
+        if (url.startsWith('//')) {
+          console.error(`🚨 CRITICAL SECURITY: Blocked protocol-relative redirect attempt: ${url}`);
+          return false;
+        }
+        return true;
+      }
       
-      // Log email open event
-      await storage.createAnalyticsEvent({
-        eventType: 'email_opened',
-        metadata: {
-          trackingId: trackingId,
+      // REJECT ALL external URLs - this is the most secure approach
+      console.error(`🚨 CRITICAL SECURITY VIOLATION: Rejected external redirect attempt: ${url}`);
+      console.error(`🚨 SECURITY POLICY: Only relative paths (starting with /) are allowed`);
+      
+      return false;
+    } catch (error) {
+      console.error(`🚨 SECURITY: Invalid redirect URL format: ${url}`, error);
+      return false;
+    }
+  };
+
+  // Email tracking routes (before authentication routes to avoid middleware)
+  // Updated to match SendGrid service URL generation: /api/track/open/:campaignId/:userId
+  app.get("/api/track/open/:campaignId/:userId", async (req, res) => {
+    console.log(`🔍 DEBUG: Tracking open request - Campaign: ${req.params.campaignId}, User: ${req.params.userId}`);
+    try {
+      const { campaignId, userId } = req.params;
+      const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
+      console.log(`🔍 DEBUG: Extracted params - campaignId: ${campaignId}, userId: ${userId}, clientIp: ${clientIp}`);
+      
+      // Rate limiting check
+      if (!checkRateLimit(clientIp)) {
+        console.warn(`Rate limit exceeded for tracking open from IP: ${clientIp}`);
+        // Still return pixel to avoid breaking email display
+        const pixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+        res.setHeader('Content-Type', 'image/gif');
+        res.end(pixel);
+        return;
+      }
+
+      // Safely validate campaign and user exist (handle database errors gracefully)
+      let campaign, user;
+      try {
+        [campaign, user] = await Promise.all([
+          storage.getCampaign(campaignId).catch(() => null),
+          storage.getUser(userId).catch(() => null)
+        ]);
+      } catch (error) {
+        console.warn(`Database error during tracking validation: ${error}`);
+        campaign = null;
+        user = null;
+      }
+
+      if (!campaign || !user) {
+        console.warn(`Invalid tracking attempt - Campaign: ${campaignId}, User: ${userId}`);
+        
+        // For testing with non-existent data, create a simple log instead
+        if (process.env.NODE_ENV === 'development' && (campaignId === 'test-campaign' || userId === 'test-user')) {
+          console.log(`📧 [DEV] Simulated tracking - Campaign: ${campaignId}, User: ${userId}`);
+        }
+        
+        // Still return pixel to avoid breaking email display
+        const pixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+        res.setHeader('Content-Type', 'image/gif');
+        res.setHeader('Content-Length', pixel.length);
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        res.end(pixel);
+        return;
+      }
+      
+      // Log email open event with proper attribution
+      try {
+        await storage.createAnalyticsEvent({
+          clientId: user.clientId || null,
+          userId: userId,
+          campaignId: campaign.id,
+          eventType: 'email_opened',
+          metadata: {
+            campaignId: campaignId,
+            userId: userId,
+            campaignName: campaign.name,
+            userEmail: user.email,
+            userAgent: req.headers['user-agent'],
+            timestamp: new Date()
+          },
+          ipAddress: clientIp,
           userAgent: req.headers['user-agent'],
           timestamp: new Date()
-        },
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
-        timestamp: new Date()
-      });
+        });
+      } catch (dbError) {
+        console.warn(`Failed to log analytics event: ${dbError}`);
+      }
+
+      console.log(`📧 Email opened - Campaign: ${campaign.name}, User: ${user.email}`);
 
       // Return 1x1 transparent pixel
       const pixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
       res.setHeader('Content-Type', 'image/gif');
       res.setHeader('Content-Length', pixel.length);
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       res.end(pixel);
     } catch (error) {
       console.error('Tracking open error:', error);
-      res.status(200).end(); // Still return success to avoid breaking email display
+      console.error('Stack trace:', error.stack);
+      
+      // Always return pixel to avoid breaking email display
+      const pixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+      res.setHeader('Content-Type', 'image/gif');
+      res.setHeader('Content-Length', pixel.length);
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.status(200).end(pixel);
     }
   });
 
-  app.get("/api/tracking/click/:trackingId", async (req, res) => {
+  // Updated to match SendGrid service URL generation: /api/track/click/:campaignId/:userId
+  app.get("/api/track/click/:campaignId/:userId", async (req, res) => {
     try {
-      const { trackingId } = req.params;
+      const { campaignId, userId } = req.params;
       const { redirect } = req.query;
+      const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
       
-      // Log email click event
-      await storage.createAnalyticsEvent({
-        eventType: 'email_clicked',
-        metadata: {
-          trackingId: trackingId,
-          redirectUrl: redirect,
+      // Rate limiting check
+      if (!checkRateLimit(clientIp)) {
+        console.warn(`Rate limit exceeded for tracking click from IP: ${clientIp}`);
+        return res.redirect('/rate-limit-exceeded');
+      }
+
+      // Safely validate campaign and user exist (handle database errors gracefully)
+      let campaign, user;
+      try {
+        [campaign, user] = await Promise.all([
+          storage.getCampaign(campaignId).catch(() => null),
+          storage.getUser(userId).catch(() => null)
+        ]);
+      } catch (error) {
+        console.warn(`Database error during click tracking validation: ${error}`);
+        campaign = null;
+        user = null;
+      }
+
+      if (!campaign || !user) {
+        console.warn(`Invalid click tracking attempt - Campaign: ${campaignId}, User: ${userId}`);
+        return res.redirect('/error?reason=invalid_tracking');
+      }
+
+      // CRITICAL SECURITY FIX: Completely prevent open redirect attacks
+      // ONLY allow relative paths - REJECT all external redirects completely
+      let safeRedirectUrl = '/phishing-awareness';
+      if (redirect && typeof redirect === 'string') {
+        if (validateRedirectUrl(redirect)) {
+          safeRedirectUrl = redirect;
+          console.log(`✅ SECURITY: Approved relative redirect to: ${redirect}`);
+        } else {
+          console.error(`🚨 CRITICAL SECURITY VIOLATION: BLOCKED OPEN REDIRECT ATTEMPT: ${redirect} from user: ${user ? user.email : 'unknown'}`);
+          
+          // Log CRITICAL security incident for open redirect attempt
+          if (user && campaign) {
+            try {
+              await storage.createAnalyticsEvent({
+                clientId: user.clientId || null,
+                userId: userId,
+                campaignId: campaign.id,
+                eventType: 'security_incident',
+                metadata: {
+                  campaignId: campaignId,
+                  userId: userId,
+                  incident: 'OPEN_REDIRECT_ATTACK_BLOCKED',
+                  blockedUrl: redirect,
+                  userEmail: user.email,
+                  userAgent: req.headers['user-agent'],
+                  timestamp: new Date(),
+                  severity: 'CRITICAL',
+                  attackType: 'OPEN_REDIRECT'
+                },
+                ipAddress: clientIp,
+                userAgent: req.headers['user-agent'],
+                timestamp: new Date()
+              });
+            } catch (dbError) {
+              console.warn(`Failed to log security incident: ${dbError}`);
+            }
+          }
+          
+          // Force redirect to security warning page for attempted attacks
+          safeRedirectUrl = '/security-warning?reason=blocked-redirect';
+        }
+      }
+      
+      // Log email click event with proper attribution
+      try {
+        await storage.createAnalyticsEvent({
+          clientId: user.clientId || null,
+          userId: userId,
+          campaignId: campaign.id,
+          eventType: 'email_clicked',
+          metadata: {
+            campaignId: campaignId,
+            userId: userId,
+            campaignName: campaign.name,
+            userEmail: user.email,
+            redirectUrl: safeRedirectUrl,
+            originalRedirectUrl: redirect,
+            userAgent: req.headers['user-agent'],
+            timestamp: new Date()
+          },
+          ipAddress: clientIp,
           userAgent: req.headers['user-agent'],
           timestamp: new Date()
+        });
+      } catch (dbError) {
+        console.warn(`Failed to log analytics event: ${dbError}`);
+      }
+
+      console.log(`🎯 Email clicked - Campaign: ${campaign.name}, User: ${user.email}, Redirect: ${safeRedirectUrl}`);
+
+      // Redirect to safe URL
+      res.redirect(safeRedirectUrl);
+    } catch (error) {
+      console.error('Tracking click error:', error);
+      res.redirect('/error?reason=tracking_error');
+    }
+  });
+
+  // Add report phishing endpoint that matches SendGrid service URL generation
+  app.get("/api/track/report/:campaignId/:userId", async (req, res) => {
+    try {
+      const { campaignId, userId } = req.params;
+      const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
+      
+      // Rate limiting check
+      if (!checkRateLimit(clientIp)) {
+        console.warn(`Rate limit exceeded for phishing report from IP: ${clientIp}`);
+        return res.redirect('/rate-limit-exceeded');
+      }
+
+      // Safely validate campaign and user exist (handle database errors gracefully)
+      let campaign, user;
+      try {
+        [campaign, user] = await Promise.all([
+          storage.getCampaign(campaignId).catch(() => null),
+          storage.getUser(userId).catch(() => null)
+        ]);
+      } catch (error) {
+        console.warn(`Database error during phishing report validation: ${error}`);
+        campaign = null;
+        user = null;
+      }
+
+      if (!campaign || !user) {
+        console.warn(`Invalid phishing report attempt - Campaign: ${campaignId}, User: ${userId}`);
+        return res.redirect('/error?reason=invalid_tracking');
+      }
+      
+      // Log phishing report event
+      try {
+        await storage.createAnalyticsEvent({
+          clientId: user.clientId || null,
+          userId: userId,
+          campaignId: campaign.id,
+          eventType: 'phishing_reported',
+          metadata: {
+            campaignId: campaignId,
+            userId: userId,
+            campaignName: campaign.name,
+            userEmail: user.email,
+            userAgent: req.headers['user-agent'],
+            timestamp: new Date()
         },
-        ipAddress: req.ip,
+        ipAddress: clientIp,
         userAgent: req.headers['user-agent'],
         timestamp: new Date()
       });
-
-      // Redirect to the intended URL or show phishing awareness page
-      if (redirect && typeof redirect === 'string') {
-        res.redirect(redirect);
-      } else {
-        // Show phishing awareness page
-        res.redirect('/phishing-awareness');
+      } catch (dbError) {
+        console.warn(`Failed to log phishing report event: ${dbError}`);
       }
+
+      console.log(`🚨 Phishing reported - Campaign: ${campaign.name}, User: ${user.email}`);
+
+      // Redirect to phishing report success page
+      res.redirect('/phishing-reported-success');
     } catch (error) {
-      console.error('Tracking click error:', error);
-      res.redirect('/error');
+      console.error('Phishing report error:', error);
+      res.redirect('/error?reason=report_error');
     }
   });
 
-  // SendGrid webhook for email events
-  app.post("/api/webhooks/sendgrid", async (req, res) => {
+  // SendGrid webhook signature verification function
+  const verifyWebhookSignature = async (rawPayload: Buffer, signature: string, timestamp: string): Promise<boolean> => {
+    // In development without webhook public key, allow all requests but log warning
+    if (!process.env.SENDGRID_WEBHOOK_PUBLIC_KEY) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('⚠️  SendGrid webhook signature verification skipped - no SENDGRID_WEBHOOK_PUBLIC_KEY set');
+        return true;
+      }
+      throw new Error('SENDGRID_WEBHOOK_PUBLIC_KEY must be set in production');
+    }
+
     try {
-      const events = Array.isArray(req.body) ? req.body : [req.body];
+      // CRITICAL SECURITY: SendGrid uses ed25519 signature verification
+      // Signature is provided as base64-encoded bytes in header
+      const publicKey = Buffer.from(process.env.SENDGRID_WEBHOOK_PUBLIC_KEY, 'base64');
+      const signatureBuffer = Buffer.from(signature, 'base64');
       
-      for (const event of events) {
-        let eventType: string;
-        
-        switch (event.event) {
-          case 'delivered':
-            eventType = 'email_sent';
-            break;
-          case 'open':
-            eventType = 'email_opened';
-            break;
-          case 'click':
-            eventType = 'email_clicked';
-            break;
-          default:
-            continue;
-        }
-        
-        await storage.createAnalyticsEvent({
-          eventType: eventType as any,
-          metadata: {
-            email: event.email,
-            campaignId: event.unique_arg_campaign_id,
-            userId: event.unique_arg_user_id,
-            timestamp: event.timestamp,
-            userAgent: event.useragent,
-            ip: event.ip,
-            url: event.url
-          },
-          ipAddress: event.ip,
-          userAgent: event.useragent,
-          timestamp: new Date(event.timestamp * 1000)
-        });
+      // CRITICAL SECURITY: Verify timestamp freshness (prevent replay attacks)
+      const timestampInt = parseInt(timestamp);
+      const currentTime = Math.floor(Date.now() / 1000);
+      const timestampDiff = Math.abs(currentTime - timestampInt);
+      
+      if (timestampDiff > 600) { // 10 minutes tolerance
+        console.error('🚨 SECURITY: SendGrid webhook timestamp too old - potential replay attack');
+        console.error(`Timestamp diff: ${timestampDiff}s, Current: ${currentTime}, Provided: ${timestampInt}`);
+        return false;
       }
       
-      res.status(200).json({ message: 'Webhook processed' });
+      // CRITICAL SECURITY: Construct verification payload exactly as SendGrid does
+      // Format: timestamp + rawPayload (no JSON.stringify!)
+      const verificationPayload = Buffer.concat([
+        Buffer.from(timestamp, 'utf8'),
+        rawPayload
+      ]);
+      
+      // Verify ed25519 signature using @noble/ed25519
+      const isValid = await verify(signatureBuffer, verificationPayload, publicKey);
+      
+      if (!isValid) {
+        console.error('🚨 SECURITY: SendGrid webhook signature verification failed');
+        console.error(`Timestamp: ${timestamp}, Payload length: ${rawPayload.length}`);
+      }
+      
+      return isValid;
+    } catch (error) {
+      console.error('🚨 SECURITY: Webhook signature verification error:', error);
+      return false;
+    }
+  };
+
+  // Raw body middleware specifically for SendGrid webhook
+  app.use('/api/webhooks/sendgrid', (req, res, next) => {
+    const data: Buffer[] = [];
+    req.on('data', chunk => data.push(chunk));
+    req.on('end', () => {
+      (req as any).rawBody = Buffer.concat(data);
+      try {
+        req.body = JSON.parse((req as any).rawBody.toString());
+      } catch (error) {
+        console.error('SendGrid webhook JSON parse error:', error);
+        return res.status(400).json({ error: 'Invalid JSON payload' });
+      }
+      next();
+    });
+  });
+
+  // SendGrid webhook for email events with signature verification
+  app.post("/api/webhooks/sendgrid", async (req, res) => {
+    try {
+      // CRITICAL SECURITY: Get correct SendGrid webhook headers
+      const signature = req.headers['x-twilio-email-event-webhook-signature'] as string;
+      const timestamp = req.headers['x-twilio-email-event-webhook-timestamp'] as string;
+      const rawPayload = (req as any).rawBody as Buffer;
+
+      if (!signature || !timestamp || !rawPayload) {
+        console.error('❌ Missing required SendGrid webhook headers or payload');
+        return res.status(400).json({ error: 'Missing required headers or payload' });
+      }
+
+      // CRITICAL SECURITY: Verify webhook signature with raw payload
+      const isValidSignature = await verifyWebhookSignature(rawPayload, signature, timestamp);
+      if (!isValidSignature) {
+        console.error('❌ Invalid SendGrid webhook signature');
+        return res.status(401).json({ error: 'Invalid webhook signature' });
+      }
+
+      // Check timestamp to prevent replay attacks (webhook should be recent)
+      if (timestamp) {
+        const webhookTime = parseInt(timestamp) * 1000;
+        const currentTime = Date.now();
+        const maxAge = 10 * 60 * 1000; // 10 minutes
+        
+        if (Math.abs(currentTime - webhookTime) > maxAge) {
+          console.error('❌ SendGrid webhook timestamp too old');
+          return res.status(401).json({ error: 'Webhook timestamp too old' });
+        }
+      }
+
+      const events = Array.isArray(req.body) ? req.body : [req.body];
+      let processedCount = 0;
+      
+      for (const event of events) {
+        try {
+          let eventType: string;
+          
+          switch (event.event) {
+            case 'delivered':
+              eventType = 'email_sent';
+              break;
+            case 'open':
+              eventType = 'email_opened';
+              break;
+            case 'click':
+              eventType = 'email_clicked';
+              break;
+            case 'bounce':
+            case 'dropped':
+            case 'spamreport':
+            case 'unsubscribe':
+              eventType = 'email_failed';
+              break;
+            default:
+              console.log(`Skipping unknown SendGrid event type: ${event.event}`);
+              continue;
+          }
+
+          // Extract campaign and user info from custom args (fix name mismatch)
+          const campaignId = event.campaign_id || event.unique_arg_campaign_id || event['unique_arg_campaign_id'];
+          const userId = event.user_id || event.unique_arg_user_id || event['unique_arg_user_id'];
+          const clientId = event.client_id || event.unique_arg_client_id || event['unique_arg_client_id'];
+
+          // Validate that we have the required data
+          if (!campaignId || !userId) {
+            console.warn(`SendGrid event missing required data - campaignId: ${campaignId}, userId: ${userId}`);
+            continue;
+          }
+
+          // Get additional context if available
+          let campaign, user;
+          try {
+            [campaign, user] = await Promise.all([
+              storage.getCampaign(campaignId),
+              storage.getUser(userId)
+            ]);
+          } catch (error) {
+            console.warn(`Could not fetch campaign/user details for event: ${error}`);
+          }
+          
+          await storage.createAnalyticsEvent({
+            clientId: clientId || (user ? user.clientId : null),
+            userId: userId,
+            eventType: eventType as any,
+            metadata: {
+              email: event.email,
+              campaignId: campaignId,
+              userId: userId,
+              clientId: clientId,
+              campaignName: campaign ? campaign.name : undefined,
+              userEmail: user ? user.email : event.email,
+              sendgridEventId: event.sg_event_id,
+              sendgridMessageId: event.sg_message_id,
+              timestamp: event.timestamp,
+              userAgent: event.useragent,
+              ip: event.ip,
+              url: event.url,
+              reason: event.reason,
+              status: event.status
+            },
+            ipAddress: event.ip,
+            userAgent: event.useragent,
+            timestamp: new Date(event.timestamp * 1000)
+          });
+
+          processedCount++;
+          console.log(`📨 SendGrid event processed: ${eventType} for ${event.email}`);
+        } catch (eventError) {
+          console.error(`Error processing individual SendGrid event:`, eventError);
+        }
+      }
+      
+      console.log(`✅ SendGrid webhook processed ${processedCount}/${events.length} events`);
+      res.status(200).json({ 
+        message: 'Webhook processed', 
+        processed: processedCount, 
+        total: events.length 
+      });
     } catch (error) {
       console.error('SendGrid webhook error:', error);
       res.status(500).json({ error: 'Webhook processing failed' });
@@ -558,6 +969,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/campaigns/:id", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const campaign = await storage.getCampaign(id);
+      
+      if (!campaign) {
+        return res.status(404).json({ message: 'Campaign not found' });
+      }
+
+      // Check access permissions
+      const authReq = req as AuthenticatedRequest;
+      if (authReq.user.role === 'client_admin' && campaign.clientId !== authReq.user.clientId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+
+      res.json(campaign);
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to fetch campaign', error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+  });
+
+  app.put("/api/campaigns/:id", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const campaign = await storage.getCampaign(id);
+      
+      if (!campaign) {
+        return res.status(404).json({ message: 'Campaign not found' });
+      }
+
+      // Check access permissions
+      const authReq = req as AuthenticatedRequest;
+      if (authReq.user.role === 'client_admin' && campaign.clientId !== authReq.user.clientId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+
+      // Don't allow updating active campaigns
+      if (campaign.status === 'active') {
+        return res.status(400).json({ message: 'Cannot update active campaigns' });
+      }
+
+      const updates = req.body;
+      const updatedCampaign = await storage.updateCampaign(id, updates);
+      res.json(updatedCampaign);
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to update campaign', error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+  });
+
+  app.delete("/api/campaigns/:id", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const campaign = await storage.getCampaign(id);
+      
+      if (!campaign) {
+        return res.status(404).json({ message: 'Campaign not found' });
+      }
+
+      // Check access permissions
+      const authReq = req as AuthenticatedRequest;
+      if (authReq.user.role === 'client_admin' && campaign.clientId !== authReq.user.clientId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+
+      // Don't allow deleting active campaigns
+      if (campaign.status === 'active') {
+        return res.status(400).json({ message: 'Cannot delete active campaigns' });
+      }
+
+      await storage.deleteCampaign(id);
+      res.json({ message: 'Campaign deleted successfully' });
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to delete campaign', error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+  });
+
   app.post("/api/campaigns/:id/launch", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
     try {
       const { id } = req.params;
@@ -565,6 +1052,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (!campaign) {
         return res.status(404).json({ message: 'Campaign not found' });
+      }
+
+      // Check access permissions
+      const authReq = req as AuthenticatedRequest;
+      if (authReq.user.role === 'client_admin' && campaign.clientId !== authReq.user.clientId) {
+        return res.status(403).json({ message: 'Access denied' });
       }
 
       // Get target users
@@ -582,6 +1075,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true, emailsSent: emailResults.sent });
     } catch (error) {
       res.status(500).json({ message: 'Failed to launch campaign', error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+  });
+
+  app.get("/api/campaigns/:id/results", authenticateToken, requireRole(['super_admin', 'client_admin']), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const campaign = await storage.getCampaign(id);
+      
+      if (!campaign) {
+        return res.status(404).json({ message: 'Campaign not found' });
+      }
+
+      // Check access permissions
+      const authReq = req as AuthenticatedRequest;
+      if (authReq.user.role === 'client_admin' && campaign.clientId !== authReq.user.clientId) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+
+      // Get detailed analytics for the campaign
+      const analytics = await storage.getAnalyticsByField('campaignId', id);
+      
+      const results = {
+        campaign,
+        analytics: {
+          totalSent: campaign.emailsSent || 0,
+          totalOpened: campaign.emailsOpened || 0,
+          totalClicked: campaign.emailsClicked || 0,
+          totalReported: campaign.emailsReported || 0,
+          openRate: campaign.emailsSent > 0 ? ((campaign.emailsOpened || 0) / campaign.emailsSent * 100).toFixed(2) : '0.00',
+          clickRate: campaign.emailsSent > 0 ? ((campaign.emailsClicked || 0) / campaign.emailsSent * 100).toFixed(2) : '0.00',
+          reportRate: campaign.emailsSent > 0 ? ((campaign.emailsReported || 0) / campaign.emailsSent * 100).toFixed(2) : '0.00'
+        },
+        events: analytics
+      };
+
+      res.json(results);
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to fetch campaign results', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 

@@ -86,74 +86,111 @@ class SendGridService {
       );
     }
 
+    console.log(`📧 Starting phishing campaign: ${campaign.name} targeting ${recipients.length} users`);
+
     for (const user of recipients) {
       try {
-        // Add tracking pixels and links to email content
-        const trackingPixelUrl = `${process.env.BASE_URL || 'http://localhost:5000'}/api/track/open/${campaign.id}/${user.id}`;
-        const clickTrackingUrl = `${process.env.BASE_URL || 'http://localhost:5000'}/api/track/click/${campaign.id}/${user.id}`;
-
-        // Inject tracking pixel into HTML content
-        let htmlContent = campaign.template.htmlContent;
-        if (htmlContent) {
-          // Add tracking pixel at the end of the body
-          htmlContent = htmlContent.replace(
-            '</body>',
-            `<img src="${trackingPixelUrl}" width="1" height="1" style="display:none;" /></body>`
-          );
-
-          // Replace any links with click tracking
-          htmlContent = htmlContent.replace(
-            /href="([^"]+)"/g,
-            `href="${clickTrackingUrl}?redirect=$1"`
-          );
-        }
+        // Generate tracking URLs
+        const baseUrl = process.env.BASE_URL || 'http://localhost:5000';
+        const trackingPixelUrl = `${baseUrl}/api/track/open/${campaign.id}/${user.id}`;
+        const clickTrackingUrl = `${baseUrl}/api/track/click/${campaign.id}/${user.id}`;
+        const reportPhishingUrl = `${baseUrl}/api/track/report/${campaign.id}/${user.id}`;
 
         // Personalize email content
-        const personalizedSubject = campaign.template.subject
-          .replace('{{firstName}}', user.firstName)
-          .replace('{{lastName}}', user.lastName)
-          .replace('{{email}}', user.email);
+        const personalizedSubject = this.personalizeContent(campaign.template.subject, user);
+        let personalizedHtml = this.personalizeContent(campaign.template.htmlContent, user);
+        const personalizedText = this.personalizeContent(campaign.template.textContent || '', user);
 
-        const personalizedHtml = htmlContent
-          .replace(/{{firstName}}/g, user.firstName)
-          .replace(/{{lastName}}/g, user.lastName)
-          .replace(/{{email}}/g, user.email);
+        // Inject tracking pixel into HTML content
+        if (personalizedHtml) {
+          // Add tracking pixel before closing body tag
+          if (personalizedHtml.includes('</body>')) {
+            personalizedHtml = personalizedHtml.replace(
+              '</body>',
+              `<img src="${trackingPixelUrl}" width="1" height="1" style="display:none;" alt="" /></body>`
+            );
+          } else {
+            // If no body tag, add it at the end
+            personalizedHtml += `<img src="${trackingPixelUrl}" width="1" height="1" style="display:none;" alt="" />`;
+          }
 
-        const personalizedText = campaign.template.textContent
-          ?.replace(/{{firstName}}/g, user.firstName)
-          .replace(/{{lastName}}/g, user.lastName)
-          .replace(/{{email}}/g, user.email);
+          // Replace tracking URLs - handle multiple URL patterns
+          personalizedHtml = personalizedHtml.replace(
+            /href="{{trackingUrl}}"/g,
+            `href="${clickTrackingUrl}"`
+          );
 
-        const emailSent = await this.sendEmail({
+          // Add phishing report link if template includes it
+          personalizedHtml = personalizedHtml.replace(
+            /href="{{reportPhishingUrl}}"/g,
+            `href="${reportPhishingUrl}"`
+          );
+
+          // Add training disclaimer if not present
+          if (!personalizedHtml.includes('training') && !personalizedHtml.includes('simulation')) {
+            personalizedHtml += `<div style="font-size: 10px; color: #999; margin-top: 20px; padding: 10px; border-top: 1px solid #ddd;">
+              This is a simulated phishing email for security awareness training purposes. 
+              If you received this email, please report it to your IT security team.
+            </div>`;
+          }
+        }
+
+        // Prepare SendGrid email with custom tracking
+        const emailParams: EmailParams = {
           to: user.email,
           from: `${campaign.template.fromName} <${campaign.template.fromEmail}>`,
           subject: personalizedSubject,
           html: personalizedHtml,
           text: personalizedText,
           trackingSettings: {
-            clickTracking: { enable: true },
-            openTracking: { enable: true }
+            clickTracking: { enable: false }, // We use our own click tracking
+            openTracking: { enable: false }   // We use our own open tracking
           }
-        });
+        };
+
+        // Add custom headers for better tracking
+        (emailParams as any).customArgs = {
+          campaign_id: campaign.id,
+          user_id: user.id,
+          client_id: user.clientId || '',
+          phishing_simulation: 'true'
+        };
+
+        const emailSent = await this.sendEmail(emailParams);
 
         if (emailSent) {
           result.sent++;
+          console.log(`✅ Email sent to ${user.email}`);
         } else {
           result.failed++;
           result.errors.push(`Failed to send to ${user.email}`);
+          console.log(`❌ Failed to send to ${user.email}`);
         }
 
-        // Add delay between emails to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // Add progressive delay to avoid rate limiting (faster for first emails, slower later)
+        const delay = Math.min(50 + (result.sent * 10), 500);
+        await new Promise(resolve => setTimeout(resolve, delay));
 
       } catch (error) {
         result.failed++;
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         result.errors.push(`Error sending to ${user.email}: ${errorMessage}`);
+        console.error(`❌ Error sending to ${user.email}:`, error);
       }
     }
 
+    console.log(`📊 Campaign complete - Sent: ${result.sent}, Failed: ${result.failed}`);
     return result;
+  }
+
+  private personalizeContent(content: string, user: User): string {
+    return content
+      .replace(/{{firstName}}/g, user.firstName)
+      .replace(/{{lastName}}/g, user.lastName) 
+      .replace(/{{fullName}}/g, `${user.firstName} ${user.lastName}`)
+      .replace(/{{email}}/g, user.email)
+      .replace(/{{department}}/g, user.department || 'your department')
+      .replace(/{{company}}/g, 'your organization');
   }
 
   async sendTrainingNotification(user: User, courseName: string, clientBranding?: any): Promise<boolean> {

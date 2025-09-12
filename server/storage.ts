@@ -58,6 +58,7 @@ export interface IStorage {
   getCampaign(id: string): Promise<PhishingCampaign | undefined>;
   createCampaign(campaign: InsertPhishingCampaign): Promise<PhishingCampaign>;
   updateCampaign(id: string, updates: Partial<PhishingCampaign>): Promise<PhishingCampaign>;
+  deleteCampaign(id: string): Promise<void>;
   getCampaignsByClient(clientId: string): Promise<PhishingCampaign[]>;
   getActiveCampaigns(): Promise<PhishingCampaign[]>;
   
@@ -66,6 +67,7 @@ export interface IStorage {
   getAnalyticsEventsByClient(clientId: string, startDate?: Date, endDate?: Date): Promise<AnalyticsEvent[]>;
   getAnalyticsEventsByUser(userId: string, startDate?: Date, endDate?: Date): Promise<AnalyticsEvent[]>;
   getCampaignAnalytics(campaignId: string): Promise<AnalyticsEvent[]>;
+  getAnalyticsByField(field: string, value: string): Promise<AnalyticsEvent[]>;
   
   // Sessions
   createSession(session: InsertSession): Promise<Session>;
@@ -222,6 +224,10 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(phishingCampaigns.createdAt));
   }
 
+  async deleteCampaign(id: string): Promise<void> {
+    await db.delete(phishingCampaigns).where(eq(phishingCampaigns.id, id));
+  }
+
   async getActiveCampaigns(): Promise<PhishingCampaign[]> {
     return await db
       .select()
@@ -274,6 +280,33 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(analyticsEvents)
       .where(eq(analyticsEvents.campaignId, campaignId))
+      .orderBy(desc(analyticsEvents.timestamp));
+  }
+
+  async getAnalyticsByField(field: string, value: string): Promise<AnalyticsEvent[]> {
+    let whereCondition;
+    
+    switch (field) {
+      case 'campaignId':
+        whereCondition = eq(analyticsEvents.campaignId, value);
+        break;
+      case 'userId':
+        whereCondition = eq(analyticsEvents.userId, value);
+        break;
+      case 'clientId':
+        whereCondition = eq(analyticsEvents.clientId, value);
+        break;
+      case 'courseId':
+        whereCondition = eq(analyticsEvents.courseId, value);
+        break;
+      default:
+        throw new Error(`Unsupported field: ${field}`);
+    }
+
+    return await db
+      .select()
+      .from(analyticsEvents)
+      .where(whereCondition)
       .orderBy(desc(analyticsEvents.timestamp));
   }
 
