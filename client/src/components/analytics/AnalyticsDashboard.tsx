@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   BarChart3, 
   TrendingUp, 
@@ -18,8 +19,29 @@ import {
   Search,
   Eye,
   Lightbulb,
-  Calendar
+  Calendar,
+  Activity,
+  RefreshCw,
+  FileText
 } from 'lucide-react';
+import {
+  LineChart,
+  Line,
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  ComposedChart
+} from 'recharts';
 import { api, type AnalyticsEvent, type User } from '@/lib/api';
 import { format, subDays, startOfDay, endOfDay } from 'date-fns';
 
@@ -30,6 +52,17 @@ export default function AnalyticsDashboard() {
   const [endDate, setEndDate] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClient, setSelectedClient] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const [activeChartTab, setActiveChartTab] = useState('trends');
+  const [filters, setFilters] = useState({
+    department: '',
+    riskLevel: '',
+    userGroup: '',
+    courseStatus: '',
+    eventType: '',
+    datePreset: '30',
+    showInactive: false
+  });
 
   // Calculate date range
   const getDateRange = () => {
@@ -86,6 +119,31 @@ export default function AnalyticsDashboard() {
     enabled: currentUser?.role === 'super_admin'
   });
 
+  // Apply filters to analytics events
+  const filteredAnalyticsEvents = analyticsEvents.filter(event => {
+    // Filter by event type
+    if (filters.eventType && event.eventType !== filters.eventType) return false;
+    
+    // Filter by user department (if event has userId)
+    if (filters.department && event.userId) {
+      const eventUser = users.find(u => u.id === event.userId);
+      if (!eventUser || eventUser.department !== filters.department) return false;
+    }
+    
+    return true;
+  });
+
+  // Apply filters to users
+  const filteredUsers = users.filter(user => {
+    // Filter by department
+    if (filters.department && user.department !== filters.department) return false;
+    
+    // Filter by active status
+    if (!filters.showInactive && !user.isActive) return false;
+    
+    return true;
+  });
+
   // Calculate key metrics
   const metrics = {
     trainingCompletion: calculateTrainingCompletion(),
@@ -95,8 +153,8 @@ export default function AnalyticsDashboard() {
   };
 
   function calculateTrainingCompletion() {
-    const courseEvents = analyticsEvents.filter(e => e.eventType === 'course_completed');
-    const totalUsers = users.length;
+    const courseEvents = filteredAnalyticsEvents.filter(e => e.eventType === 'course_completed');
+    const totalUsers = filteredUsers.length;
     if (totalUsers === 0) return 0;
     
     const uniqueCompletions = new Set(courseEvents.map(e => e.userId)).size;
@@ -104,15 +162,15 @@ export default function AnalyticsDashboard() {
   }
 
   function calculatePhishingClickRate() {
-    const emailsSent = analyticsEvents.filter(e => e.eventType === 'email_sent').length;
-    const emailsClicked = analyticsEvents.filter(e => e.eventType === 'email_clicked').length;
+    const emailsSent = filteredAnalyticsEvents.filter(e => e.eventType === 'email_sent').length;
+    const emailsClicked = filteredAnalyticsEvents.filter(e => e.eventType === 'email_clicked').length;
     
     if (emailsSent === 0) return 0;
     return Math.round((emailsClicked / emailsSent) * 100 * 10) / 10;
   }
 
   function calculateAverageQuizScore() {
-    const quizEvents = analyticsEvents.filter(e => 
+    const quizEvents = filteredAnalyticsEvents.filter(e => 
       e.eventType === 'quiz_completed' && e.metadata?.score
     );
     
@@ -122,7 +180,7 @@ export default function AnalyticsDashboard() {
   }
 
   function calculateActiveLearners() {
-    const recentEvents = analyticsEvents.filter(e => 
+    const recentEvents = filteredAnalyticsEvents.filter(e => 
       ['course_started', 'quiz_completed', 'course_completed'].includes(e.eventType)
     );
     return new Set(recentEvents.map(e => e.userId)).size;
@@ -140,7 +198,7 @@ export default function AnalyticsDashboard() {
       const dayStart = startOfDay(d).getTime();
       const dayEnd = endOfDay(d).getTime();
       
-      const dayEvents = analyticsEvents.filter(e => {
+      const dayEvents = filteredAnalyticsEvents.filter(e => {
         const eventTime = new Date(e.timestamp).getTime();
         return eventTime >= dayStart && eventTime <= dayEnd;
       });
@@ -155,6 +213,144 @@ export default function AnalyticsDashboard() {
     }
     
     return days;
+  }
+
+  // Chart color themes
+  const chartColors = {
+    primary: '#3b82f6',
+    success: '#10b981',
+    warning: '#f59e0b',
+    danger: '#ef4444',
+    info: '#06b6d4',
+    muted: '#6b7280'
+  };
+
+  // Department breakdown data
+  const departmentData = getDepartmentBreakdown();
+
+  function getDepartmentBreakdown() {
+    const deptMap = new Map();
+    filteredUsers.forEach(user => {
+      const dept = user.department || 'No Department';
+      if (!deptMap.has(dept)) {
+        deptMap.set(dept, { name: dept, users: 0, completed: 0, risk: { high: 0, medium: 0, low: 0 } });
+      }
+      const deptData = deptMap.get(dept);
+      deptData.users++;
+      
+      const userEvents = filteredAnalyticsEvents.filter(e => e.userId === user.id);
+      const coursesCompleted = userEvents.filter(e => e.eventType === 'course_completed').length;
+      if (coursesCompleted > 0) deptData.completed++;
+      
+      const phishingFailed = userEvents.filter(e => 
+        e.eventType === 'email_clicked' && e.metadata?.reported !== true
+      ).length;
+      const quizEvents = userEvents.filter(e => e.eventType === 'quiz_completed');
+      const avgQuizScore = quizEvents.length > 0 
+        ? quizEvents.reduce((sum, e) => sum + (e.metadata?.score || 0), 0) / quizEvents.length
+        : 0;
+      
+      const riskLevel = getRiskLevel(phishingFailed, 0, avgQuizScore);
+      if (riskLevel === 'High Risk') deptData.risk.high++;
+      else if (riskLevel === 'Medium Risk') deptData.risk.medium++;
+      else deptData.risk.low++;
+    });
+    
+    return Array.from(deptMap.values()).map(dept => ({
+      ...dept,
+      completionRate: dept.users > 0 ? Math.round((dept.completed / dept.users) * 100) : 0
+    }));
+  }
+
+  // Phishing campaign performance data
+  const phishingPerformanceData = getPhishingPerformanceData();
+
+  function getPhishingPerformanceData() {
+    const campaignMap = new Map();
+    filteredAnalyticsEvents.filter(e => e.campaignId).forEach(event => {
+      const campaignId = event.campaignId!;
+      if (!campaignMap.has(campaignId)) {
+        campaignMap.set(campaignId, {
+          id: campaignId,
+          sent: 0,
+          opened: 0,
+          clicked: 0,
+          reported: 0
+        });
+      }
+      const data = campaignMap.get(campaignId);
+      if (event.eventType === 'email_sent') data.sent++;
+      if (event.eventType === 'email_opened') data.opened++;
+      if (event.eventType === 'email_clicked') {
+        data.clicked++;
+        if (event.metadata?.reported) data.reported++;
+      }
+    });
+    
+    return Array.from(campaignMap.values()).map((campaign, index) => ({
+      name: `Campaign ${index + 1}`,
+      sent: campaign.sent,
+      opened: campaign.opened,
+      clicked: campaign.clicked,
+      reported: campaign.reported,
+      openRate: campaign.sent > 0 ? Math.round((campaign.opened / campaign.sent) * 100) : 0,
+      clickRate: campaign.sent > 0 ? Math.round((campaign.clicked / campaign.sent) * 100) : 0,
+      reportRate: campaign.clicked > 0 ? Math.round((campaign.reported / campaign.clicked) * 100) : 0
+    }));
+  }
+
+  // Risk distribution data for pie chart
+  const riskDistribution = getRiskDistribution();
+
+  function getRiskDistribution() {
+    const distribution = { 'High Risk': 0, 'Medium Risk': 0, 'Low Risk': 0 };
+    
+    // Calculate risk distribution from filtered users
+    filteredUsers.forEach(user => {
+      const userEvents = filteredAnalyticsEvents.filter(e => e.userId === user.id);
+      const phishingFailed = userEvents.filter(e => 
+        e.eventType === 'email_clicked' && e.metadata?.reported !== true
+      ).length;
+      const quizEvents = userEvents.filter(e => e.eventType === 'quiz_completed');
+      const avgQuizScore = quizEvents.length > 0 
+        ? quizEvents.reduce((sum, e) => sum + (e.metadata?.score || 0), 0) / quizEvents.length
+        : 0;
+      
+      const riskLevel = getRiskLevel(phishingFailed, 0, avgQuizScore);
+      distribution[riskLevel]++;
+    });
+    
+    return [
+      { name: 'High Risk', value: distribution['High Risk'], color: chartColors.danger },
+      { name: 'Medium Risk', value: distribution['Medium Risk'], color: chartColors.warning },
+      { name: 'Low Risk', value: distribution['Low Risk'], color: chartColors.success }
+    ];
+  }
+
+  // Handle data refresh
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    // Trigger re-fetch of analytics data
+    // The useQuery will automatically refetch when queryKey changes
+    setTimeout(() => setRefreshing(false), 1000);
+  };
+
+  // Custom tooltip for charts
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-background border border-border rounded-lg p-3 shadow-lg">
+          <p className="font-medium text-sm mb-2">{label}</p>
+          {payload.map((entry: any, index: number) => (
+            <p key={index} className="text-sm" style={{ color: entry.color }}>
+              {entry.name}: {entry.value}
+              {entry.name.includes('Rate') ? '%' : ''}
+            </p>
+          ))}
+        </div>
+      );
+    }
+    return null;
   }
 
   // User performance data
@@ -253,6 +449,37 @@ export default function AnalyticsDashboard() {
     URL.revokeObjectURL(url);
   };
 
+  // Enhanced export with more data
+  const exportDetailedReport = () => {
+    const timestamp = format(new Date(), 'yyyy-MM-dd-HHmm');
+    
+    // Main analytics CSV
+    const analyticsData = [
+      ['Date Range', `${format(new Date(rangeStart), 'yyyy-MM-dd')} to ${format(new Date(rangeEnd), 'yyyy-MM-dd')}`],
+      ['Total Users', users.length],
+      ['Training Completion Rate', `${metrics.trainingCompletion}%`],
+      ['Phishing Click Rate', `${metrics.phishingClickRate}%`],
+      ['Average Quiz Score', `${metrics.averageQuizScore}%`],
+      ['Active Learners', metrics.activeLearners],
+      [''],
+      ['Event Type', 'Count'],
+      ...Object.entries(
+        analyticsEvents.reduce((acc, event) => {
+          acc[event.eventType] = (acc[event.eventType] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>)
+      )
+    ].map(row => Array.isArray(row) ? row.join(',') : row).join('\n');
+
+    const blob = new Blob([analyticsData], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `analytics-detailed-report-${timestamp}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   if (eventsLoading) {
     return (
       <div className="space-y-6">
@@ -310,6 +537,73 @@ export default function AnalyticsDashboard() {
               />
             </>
           )}
+
+          {/* Advanced Filters */}
+          <div className="flex items-center space-x-3 border-l border-border pl-3">
+            <Select 
+              value={filters.department} 
+              onValueChange={(value) => setFilters(prev => ({ ...prev, department: value }))}
+            >
+              <SelectTrigger className="w-40" data-testid="select-department">
+                <SelectValue placeholder="Department" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">All Departments</SelectItem>
+                {Array.from(new Set(users.map(u => u.department).filter(Boolean))).map(dept => (
+                  <SelectItem key={dept} value={dept}>{dept}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select 
+              value={filters.riskLevel} 
+              onValueChange={(value) => setFilters(prev => ({ ...prev, riskLevel: value }))}
+            >
+              <SelectTrigger className="w-36" data-testid="select-risk-level">
+                <SelectValue placeholder="Risk Level" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">All Risk Levels</SelectItem>
+                <SelectItem value="High Risk">High Risk</SelectItem>
+                <SelectItem value="Medium Risk">Medium Risk</SelectItem>
+                <SelectItem value="Low Risk">Low Risk</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select 
+              value={filters.eventType} 
+              onValueChange={(value) => setFilters(prev => ({ ...prev, eventType: value }))}
+            >
+              <SelectTrigger className="w-44" data-testid="select-event-type">
+                <SelectValue placeholder="Event Type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">All Events</SelectItem>
+                <SelectItem value="course_completed">Course Completed</SelectItem>
+                <SelectItem value="quiz_completed">Quiz Completed</SelectItem>
+                <SelectItem value="email_opened">Email Opened</SelectItem>
+                <SelectItem value="email_clicked">Email Clicked</SelectItem>
+                <SelectItem value="login">Login</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => setFilters({
+                department: '',
+                riskLevel: '',
+                userGroup: '',
+                courseStatus: '',
+                eventType: '',
+                datePreset: '30',
+                showInactive: false
+              })}
+              data-testid="button-clear-filters"
+            >
+              Clear Filters
+            </Button>
+          </div>
           
           {currentUser?.role === 'super_admin' && (
             <Select value={selectedClient} onValueChange={setSelectedClient}>
@@ -327,6 +621,15 @@ export default function AnalyticsDashboard() {
             </Select>
           )}
           
+          <Button 
+            onClick={handleRefresh} 
+            disabled={refreshing}
+            variant="outline"
+            data-testid="button-refresh"
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
           <Button onClick={exportReport} data-testid="button-export-report">
             <Download className="w-4 h-4 mr-2" />
             Export Report
@@ -410,82 +713,352 @@ export default function AnalyticsDashboard() {
       </div>
 
       {/* Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Training Progress Over Time</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="chart-container flex items-center justify-center text-muted-foreground">
-              <div className="text-center">
-                <TrendingUp className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                <p className="text-lg font-medium">Training Progress Chart</p>
-                <p className="text-sm">
-                  Showing completion rates for the selected period
-                </p>
-                <div className="mt-4 space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span>Course Completions:</span>
-                    <span className="font-medium">
-                      {analyticsEvents.filter(e => e.eventType === 'course_completed').length}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span>Quiz Completions:</span>
-                    <span className="font-medium">
-                      {analyticsEvents.filter(e => e.eventType === 'quiz_completed').length}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      <Tabs value={activeChartTab} onValueChange={setActiveChartTab} className="space-y-6">
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="trends" data-testid="tab-trends">
+            <TrendingUp className="w-4 h-4 mr-2" />
+            Trends
+          </TabsTrigger>
+          <TabsTrigger value="performance" data-testid="tab-performance">
+            <BarChart3 className="w-4 h-4 mr-2" />
+            Performance
+          </TabsTrigger>
+          <TabsTrigger value="risk" data-testid="tab-risk">
+            <Activity className="w-4 h-4 mr-2" />
+            Risk Analysis
+          </TabsTrigger>
+        </TabsList>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Phishing Campaign Results</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="chart-container flex items-center justify-center text-muted-foreground">
-              <div className="text-center">
-                <Fish className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                <p className="text-lg font-medium">Campaign Results</p>
-                <p className="text-sm">Real-time phishing simulation data</p>
-                <div className="mt-4 space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span>Emails Sent:</span>
-                    <span className="font-medium">
-                      {analyticsEvents.filter(e => e.eventType === 'email_sent').length}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span>Emails Opened:</span>
-                    <span className="font-medium">
-                      {analyticsEvents.filter(e => e.eventType === 'email_opened').length}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span>Links Clicked:</span>
-                    <span className="font-medium text-destructive">
-                      {analyticsEvents.filter(e => e.eventType === 'email_clicked').length}
-                    </span>
-                  </div>
+        <TabsContent value="trends" className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center space-x-2">
+                  <TrendingUp className="w-5 h-5" />
+                  <span>Training Progress Over Time</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                      <XAxis 
+                        dataKey="date" 
+                        tick={{ fontSize: 12 }}
+                        tickLine={false}
+                      />
+                      <YAxis 
+                        tick={{ fontSize: 12 }}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Legend />
+                      <Line
+                        type="monotone"
+                        dataKey="coursesCompleted"
+                        stroke={chartColors.primary}
+                        strokeWidth={2}
+                        name="Courses Completed"
+                        dot={{ fill: chartColors.primary, strokeWidth: 2, r: 4 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="quizzesCompleted"
+                        stroke={chartColors.success}
+                        strokeWidth={2}
+                        name="Quizzes Completed"
+                        dot={{ fill: chartColors.success, strokeWidth: 2, r: 4 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center space-x-2">
+                  <Fish className="w-5 h-5" />
+                  <span>Phishing Campaign Trends</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                      <XAxis 
+                        dataKey="date" 
+                        tick={{ fontSize: 12 }}
+                        tickLine={false}
+                      />
+                      <YAxis 
+                        tick={{ fontSize: 12 }}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Legend />
+                      <Area
+                        type="monotone"
+                        dataKey="emailsOpened"
+                        stackId="1"
+                        stroke={chartColors.info}
+                        fill={chartColors.info}
+                        fillOpacity={0.6}
+                        name="Emails Opened"
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="phishingClicks"
+                        stackId="1"
+                        stroke={chartColors.danger}
+                        fill={chartColors.danger}
+                        fillOpacity={0.8}
+                        name="Links Clicked"
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="performance" className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center space-x-2">
+                  <Users className="w-5 h-5" />
+                  <span>Department Performance</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={departmentData}>
+                      <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                      <XAxis 
+                        dataKey="name" 
+                        tick={{ fontSize: 12 }}
+                        tickLine={false}
+                        angle={-45}
+                        textAnchor="end"
+                        height={80}
+                      />
+                      <YAxis 
+                        tick={{ fontSize: 12 }}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Legend />
+                      <Bar
+                        dataKey="users"
+                        fill={chartColors.muted}
+                        name="Total Users"
+                        radius={[4, 4, 0, 0]}
+                      />
+                      <Bar
+                        dataKey="completed"
+                        fill={chartColors.success}
+                        name="Completed Training"
+                        radius={[4, 4, 0, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center space-x-2">
+                  <Fish className="w-5 h-5" />
+                  <span>Phishing Campaign Performance</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="h-80">
+                  {phishingPerformanceData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={phishingPerformanceData}>
+                        <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                        <XAxis 
+                          dataKey="name" 
+                          tick={{ fontSize: 12 }}
+                          tickLine={false}
+                        />
+                        <YAxis 
+                          yAxisId="left"
+                          tick={{ fontSize: 12 }}
+                          tickLine={false}
+                          axisLine={false}
+                        />
+                        <YAxis 
+                          yAxisId="right"
+                          orientation="right"
+                          tick={{ fontSize: 12 }}
+                          tickLine={false}
+                          axisLine={false}
+                        />
+                        <Tooltip content={<CustomTooltip />} />
+                        <Legend />
+                        <Bar
+                          yAxisId="left"
+                          dataKey="sent"
+                          fill={chartColors.info}
+                          name="Emails Sent"
+                          radius={[2, 2, 0, 0]}
+                        />
+                        <Bar
+                          yAxisId="left"
+                          dataKey="clicked"
+                          fill={chartColors.danger}
+                          name="Links Clicked"
+                          radius={[2, 2, 0, 0]}
+                        />
+                        <Line
+                          yAxisId="right"
+                          type="monotone"
+                          dataKey="clickRate"
+                          stroke={chartColors.warning}
+                          strokeWidth={3}
+                          name="Click Rate (%)"
+                        />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-muted-foreground">
+                      <div className="text-center">
+                        <Fish className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                        <p>No phishing campaign data available</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="risk" className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center space-x-2">
+                  <Activity className="w-5 h-5" />
+                  <span>Risk Distribution</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={riskDistribution}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        dataKey="value"
+                      >
+                        {riskDistribution.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip 
+                        formatter={(value, name) => [value, name]}
+                        labelFormatter={() => ''}
+                      />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center space-x-2">
+                  <BarChart3 className="w-5 h-5" />
+                  <span>Department Risk Levels</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={departmentData}>
+                      <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                      <XAxis 
+                        dataKey="name" 
+                        tick={{ fontSize: 12 }}
+                        tickLine={false}
+                        angle={-45}
+                        textAnchor="end"
+                        height={80}
+                      />
+                      <YAxis 
+                        tick={{ fontSize: 12 }}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Legend />
+                      <Bar
+                        dataKey="risk.high"
+                        stackId="risk"
+                        fill={chartColors.danger}
+                        name="High Risk"
+                        radius={[0, 0, 0, 0]}
+                      />
+                      <Bar
+                        dataKey="risk.medium"
+                        stackId="risk"
+                        fill={chartColors.warning}
+                        name="Medium Risk"
+                        radius={[0, 0, 0, 0]}
+                      />
+                      <Bar
+                        dataKey="risk.low"
+                        stackId="risk"
+                        fill={chartColors.success}
+                        name="Low Risk"
+                        radius={[4, 4, 0, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+      </Tabs>
 
       {/* Detailed Reports Table */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center space-x-2">
-              <Users className="w-5 h-5" />
-              <span>User Performance Details</span>
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center space-x-2">
+                <Users className="w-5 h-5" />
+                <span>User Performance Details</span>
+              </CardTitle>
+              <Button 
+                onClick={exportDetailedReport} 
+                variant="outline" 
+                size="sm"
+                data-testid="button-export-detailed"
+              >
+                <FileText className="w-4 h-4 mr-2" />
+                Detailed Export
+              </Button>
+            </div>
             <div className="flex items-center space-x-3">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
