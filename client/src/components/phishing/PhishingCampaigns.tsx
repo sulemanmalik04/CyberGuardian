@@ -11,7 +11,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
+import EmailTemplateEditor from './EmailTemplateEditor';
 import { 
   Plus, 
   Mail, 
@@ -29,7 +31,9 @@ import {
   CreditCard,
   Package,
   Users,
-  Zap
+  Zap,
+  FileText,
+  Wand2
 } from 'lucide-react';
 import { api, type PhishingCampaign, type User } from '@/lib/api';
 
@@ -157,13 +161,22 @@ export default function PhishingCampaigns() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<typeof phishingTemplates[0] | null>(null);
   const [showTemplatePreview, setShowTemplatePreview] = useState(false);
+  const [useCustomTemplate, setUseCustomTemplate] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     domain: '',
     targetGroups: [] as string[],
     template: '',
     scheduledDate: '',
-    scheduledTime: ''
+    scheduledTime: '',
+    customTemplate: {
+      subject: '',
+      fromName: '',
+      fromEmail: '',
+      htmlContent: '',
+      textContent: '',
+      domain: ''
+    }
   });
 
   const { data: campaigns = [], isLoading: campaignsLoading } = useQuery({
@@ -266,7 +279,15 @@ export default function PhishingCampaigns() {
     setFormData(prev => ({
       ...prev,
       template: template.id,
-      domain: template.suggestedDomain
+      domain: template.suggestedDomain,
+      customTemplate: {
+        subject: template.subject,
+        fromName: template.fromName,
+        fromEmail: template.fromEmail,
+        htmlContent: template.preview,
+        textContent: template.preview,
+        domain: template.suggestedDomain
+      }
     }));
   };
 
@@ -419,6 +440,40 @@ export default function PhishingCampaigns() {
             <CardTitle>Create New Campaign</CardTitle>
           </CardHeader>
           <CardContent>
+            {useCustomTemplate && selectedTemplate ? (
+              <div className="space-y-6">
+                <Button
+                  onClick={() => setUseCustomTemplate(false)}
+                  variant="outline"
+                  size="sm"
+                  className="mb-4"
+                  data-testid="button-back-to-form"
+                >
+                  <FileText className="w-4 h-4 mr-2" />
+                  Back to Campaign Setup
+                </Button>
+                <EmailTemplateEditor
+                  template={formData.customTemplate}
+                  onChange={(template) => setFormData(prev => ({ ...prev, customTemplate: template }))}
+                  onPreview={() => setShowTemplatePreview(true)}
+                />
+                <div className="flex justify-end space-x-3">
+                  <Button 
+                    variant="outline"
+                    onClick={() => setUseCustomTemplate(false)}
+                    data-testid="button-cancel-customize"
+                  >
+                    Cancel
+                  </Button>
+                  <Button 
+                    onClick={() => setUseCustomTemplate(false)}
+                    data-testid="button-save-template"
+                  >
+                    Save Template
+                  </Button>
+                </div>
+              </div>
+            ) : (
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="space-y-4">
@@ -634,11 +689,20 @@ export default function PhishingCampaigns() {
                         type="button" 
                         variant="outline" 
                         className="w-full"
-                        disabled
+                        onClick={() => setUseCustomTemplate(!useCustomTemplate)}
                         data-testid="button-customize-template"
                       >
-                        <Edit className="w-4 h-4 mr-2" />
-                        Customize Template (Coming Soon)
+                        {useCustomTemplate ? (
+                          <>
+                            <FileText className="w-4 h-4 mr-2" />
+                            Back to Templates
+                          </>
+                        ) : (
+                          <>
+                            <Wand2 className="w-4 h-4 mr-2" />
+                            Customize Template
+                          </>
+                        )}
                       </Button>
                     </div>
                   )}
@@ -673,6 +737,7 @@ export default function PhishingCampaigns() {
                 </Button>
               </div>
             </form>
+            )}
           </CardContent>
         </Card>
       )}

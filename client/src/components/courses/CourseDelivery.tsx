@@ -5,6 +5,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
+import { useToast } from '@/hooks/use-toast';
 import { 
   Play, 
   BookOpen, 
@@ -19,16 +25,29 @@ import {
   ChevronRight,
   Bookmark,
   StickyNote,
-  Share
+  Share,
+  Trophy,
+  GraduationCap,
+  Loader2,
+  Award
 } from 'lucide-react';
 import { api, type Course, type UserProgress } from '@/lib/api';
+import QuizComponent from './QuizComponent';
 
 export default function CourseDelivery() {
   const { user: currentUser } = useAuth();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [currentModule, setCurrentModule] = useState(0);
+  const [showQuiz, setShowQuiz] = useState(false);
+  const [showGenerateDialog, setShowGenerateDialog] = useState(false);
+  const [generateFormData, setGenerateFormData] = useState({
+    topic: '',
+    difficulty: 'beginner',
+    modules: 5
+  });
 
   const { data: courses = [], isLoading } = useQuery({
     queryKey: ['courses', 'published'],
@@ -60,6 +79,18 @@ export default function CourseDelivery() {
     }) => api.generateCourse(topic, difficulty, modules),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['courses'] });
+      setShowGenerateDialog(false);
+      toast({
+        title: 'Course Generated',
+        description: 'Your AI-generated course has been created successfully!'
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Generation Failed',
+        description: error.message || 'Failed to generate course. Please try again.',
+        variant: 'destructive'
+      });
     }
   });
 
@@ -77,13 +108,13 @@ export default function CourseDelivery() {
   const getDifficultyColor = (difficulty: string) => {
     switch (difficulty.toLowerCase()) {
       case 'beginner':
-        return 'bg-green-100 text-green-800';
+        return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
       case 'intermediate':
-        return 'bg-yellow-100 text-yellow-800';
+        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200';
       case 'advanced':
-        return 'bg-red-100 text-red-800';
+        return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200';
     }
   };
 
@@ -111,11 +142,32 @@ export default function CourseDelivery() {
   const handleModuleComplete = () => {
     if (!selectedCourse || !currentUser || currentUser.role !== 'end_user') return;
 
+    const currentModuleData = selectedCourse.content.modules[currentModule];
+    
+    // If module has quiz, show it instead of completing directly
+    if (currentModuleData.quiz && currentModuleData.quiz.questions.length > 0) {
+      setShowQuiz(true);
+      return;
+    }
+
+    // No quiz, complete the module directly
+    completeModule();
+  };
+
+  const completeModule = (quizScore?: number) => {
+    if (!selectedCourse || !currentUser || currentUser.role !== 'end_user') return;
+
     const progress = getCourseProgress(selectedCourse.id);
     const totalModules = selectedCourse.content.modules.length;
     const completedModules = [...(progress?.completedModules || []), currentModule.toString()];
     const newProgress = Math.round((completedModules.length / totalModules) * 100);
     const isCompleted = completedModules.length === totalModules;
+
+    // Update quiz scores if provided
+    const quizScores = progress?.quizScores || {};
+    if (quizScore !== undefined) {
+      quizScores[`module-${currentModule}`] = quizScore;
+    }
 
     updateProgressMutation.mutate({
       userId: currentUser.id,
@@ -124,6 +176,7 @@ export default function CourseDelivery() {
         progress: newProgress,
         currentModule: Math.min(currentModule + 1, totalModules - 1),
         completedModules,
+        quizScores,
         isCompleted,
         ...(isCompleted && { completedAt: new Date().toISOString() })
       }
@@ -132,6 +185,47 @@ export default function CourseDelivery() {
     if (currentModule < totalModules - 1) {
       setCurrentModule(currentModule + 1);
     }
+  };
+
+  const handleQuizComplete = (score: number, answers: any[], timeTaken: number) => {
+    completeModule(score);
+    setShowQuiz(false);
+    
+    toast({
+      title: score >= 70 ? 'Quiz Passed!' : 'Quiz Complete',
+      description: score >= 70 
+        ? `Congratulations! You scored ${score}%` 
+        : `You scored ${score}%. Consider reviewing the material.`,
+      variant: score >= 70 ? 'default' : 'destructive'
+    });
+  };
+
+  const handleGenerateCourse = () => {
+    if (!generateFormData.topic.trim()) {
+      toast({
+        title: 'Topic Required',
+        description: 'Please enter a topic for the course',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    generateCourseMutation.mutate(generateFormData);
+  };
+
+  const getOverallGrade = (progress: UserProgress) => {
+    if (!progress.quizScores || Object.keys(progress.quizScores).length === 0) {
+      return 'N/A';
+    }
+    
+    const scores = Object.values(progress.quizScores as Record<string, number>);
+    const average = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+    
+    if (average >= 90) return 'A';
+    if (average >= 80) return 'B';
+    if (average >= 70) return 'C';
+    if (average >= 60) return 'D';
+    return 'F';
   };
 
   if (isLoading) {
@@ -154,6 +248,22 @@ export default function CourseDelivery() {
     );
   }
 
+  // Show quiz if active
+  if (showQuiz && selectedCourse) {
+    const currentModuleData = selectedCourse.content.modules[currentModule];
+    if (currentModuleData.quiz) {
+      return (
+        <QuizComponent
+          moduleTitle={currentModuleData.title}
+          questions={currentModuleData.quiz.questions}
+          onQuizComplete={handleQuizComplete}
+          onQuizCancel={() => setShowQuiz(false)}
+          passingScore={70}
+        />
+      );
+    }
+  }
+
   return (
     <div className="space-y-6">
       {!selectedCourse ? (
@@ -166,6 +276,7 @@ export default function CourseDelivery() {
               <div className="flex items-center space-x-3">
                 <Button 
                   variant="outline"
+                  onClick={() => setShowGenerateDialog(true)}
                   data-testid="button-ai-generate-course"
                 >
                   <Wand2 className="w-4 h-4 mr-2" />
@@ -185,6 +296,7 @@ export default function CourseDelivery() {
               const progress = getCourseProgress(course.id);
               const isCompleted = progress?.isCompleted || false;
               const progressPercent = progress?.progress || 0;
+              const grade = progress ? getOverallGrade(progress) : 'N/A';
 
               return (
                 <Card key={course.id} className="hover:shadow-lg transition-shadow">
@@ -208,8 +320,13 @@ export default function CourseDelivery() {
                           </Badge>
                         </div>
                         {isCompleted && (
-                          <div className="absolute top-4 left-4">
+                          <div className="absolute top-4 left-4 flex items-center space-x-2">
                             <CheckCircle className="w-6 h-6 text-green-600" />
+                            {grade !== 'N/A' && (
+                              <Badge className="bg-green-600 text-white">
+                                Grade: {grade}
+                              </Badge>
+                            )}
                           </div>
                         )}
                       </div>
@@ -233,8 +350,10 @@ export default function CourseDelivery() {
                           <span>{course.content.modules.length} modules</span>
                         </div>
                         <div className="flex items-center space-x-1">
-                          <Globe className="w-4 h-4" />
-                          <span>{course.language}</span>
+                          <Trophy className="w-4 h-4" />
+                          <span>
+                            {course.content.modules.filter(m => m.quiz && m.quiz.questions.length > 0).length} quizzes
+                          </span>
                         </div>
                       </div>
 
@@ -292,10 +411,19 @@ export default function CourseDelivery() {
                   Get started by creating your first cybersecurity training course
                 </p>
                 {(currentUser?.role === 'super_admin' || currentUser?.role === 'client_admin') && (
-                  <Button data-testid="button-create-first-course">
-                    <Plus className="w-4 h-4 mr-2" />
-                    Create First Course
-                  </Button>
+                  <div className="flex justify-center space-x-3">
+                    <Button 
+                      onClick={() => setShowGenerateDialog(true)}
+                      data-testid="button-ai-generate-first"
+                    >
+                      <Wand2 className="w-4 h-4 mr-2" />
+                      AI Generate Course
+                    </Button>
+                    <Button variant="outline" data-testid="button-create-first-course">
+                      <Plus className="w-4 h-4 mr-2" />
+                      Create Manually
+                    </Button>
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -364,11 +492,12 @@ export default function CourseDelivery() {
                       const progress = getCourseProgress(selectedCourse.id);
                       const isCompleted = progress?.completedModules?.includes(index.toString()) || false;
                       const isCurrent = index === currentModule;
+                      const quizScore = progress?.quizScores?.[`module-${index}`];
                       
                       return (
                         <div
                           key={module.id}
-                          className={`flex items-center space-x-3 p-2 rounded-md cursor-pointer transition-colors ${
+                          className={`flex items-center justify-between p-2 rounded-md cursor-pointer transition-colors ${
                             isCurrent 
                               ? 'bg-accent/10 border-l-2 border-accent' 
                               : isCompleted 
@@ -378,16 +507,23 @@ export default function CourseDelivery() {
                           onClick={() => setCurrentModule(index)}
                           data-testid={`module-${index}`}
                         >
-                          {isCompleted ? (
-                            <CheckCircle className="w-4 h-4 text-primary" />
-                          ) : isCurrent ? (
-                            <Play className="w-4 h-4 text-accent" />
-                          ) : (
-                            <div className="w-4 h-4 rounded-full border-2 border-muted-foreground" />
+                          <div className="flex items-center space-x-3">
+                            {isCompleted ? (
+                              <CheckCircle className="w-4 h-4 text-primary" />
+                            ) : isCurrent ? (
+                              <Play className="w-4 h-4 text-accent" />
+                            ) : (
+                              <div className="w-4 h-4 rounded-full border-2 border-muted-foreground" />
+                            )}
+                            <span className={`text-sm ${isCurrent ? 'font-medium' : ''}`}>
+                              {index + 1}. {module.title}
+                            </span>
+                          </div>
+                          {isCompleted && quizScore !== undefined && (
+                            <Badge variant="secondary" className="text-xs">
+                              {quizScore}%
+                            </Badge>
                           )}
-                          <span className={`text-sm ${isCurrent ? 'font-medium' : ''}`}>
-                            {index + 1}. {module.title}
-                          </span>
                         </div>
                       );
                     })}
@@ -395,20 +531,40 @@ export default function CourseDelivery() {
                 </div>
                 
                 <div className="space-y-2">
-                  <h4 className="font-medium text-sm text-muted-foreground">NEXT UP</h4>
-                  <div className="p-4 border border-border rounded-lg">
-                    <h5 className="font-medium text-sm mb-2">Interactive Quiz: Module Assessment</h5>
-                    <p className="text-xs text-muted-foreground mb-3">
-                      Test your knowledge with questions based on this module
-                    </p>
-                    <Button 
-                      className="w-full" 
-                      size="sm"
-                      data-testid="button-start-quiz"
-                    >
-                      Start Quiz
-                    </Button>
-                  </div>
+                  <h4 className="font-medium text-sm text-muted-foreground">MODULE QUIZ</h4>
+                  {selectedCourse.content.modules[currentModule]?.quiz && 
+                   selectedCourse.content.modules[currentModule].quiz!.questions.length > 0 ? (
+                    <div className="p-4 border border-border rounded-lg">
+                      <div className="flex items-start space-x-3">
+                        <Award className="w-5 h-5 text-primary mt-1" />
+                        <div className="flex-1">
+                          <h5 className="font-medium text-sm mb-2">Module Assessment</h5>
+                          <p className="text-xs text-muted-foreground mb-3">
+                            Complete the quiz to test your knowledge and unlock the next module
+                          </p>
+                          <p className="text-xs text-muted-foreground mb-3">
+                            {selectedCourse.content.modules[currentModule].quiz!.questions.length} questions • 
+                            70% passing score
+                          </p>
+                          <Button 
+                            className="w-full" 
+                            size="sm"
+                            onClick={() => setShowQuiz(true)}
+                            data-testid="button-start-quiz"
+                          >
+                            <Trophy className="w-4 h-4 mr-2" />
+                            Start Quiz
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-4 border border-border rounded-lg">
+                      <p className="text-xs text-muted-foreground">
+                        No quiz available for this module
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -455,7 +611,7 @@ export default function CourseDelivery() {
                     data-testid="button-complete-module"
                   >
                     <CheckCircle className="w-4 h-4 mr-2" />
-                    Complete
+                    {selectedCourse.content.modules[currentModule]?.quiz?.questions?.length ? 'Take Quiz' : 'Complete'}
                   </Button>
                   <Button 
                     disabled={currentModule === selectedCourse.content.modules.length - 1}
@@ -471,6 +627,93 @@ export default function CourseDelivery() {
           </CardContent>
         </Card>
       )}
+
+      {/* AI Course Generation Dialog */}
+      <Dialog open={showGenerateDialog} onOpenChange={setShowGenerateDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>AI Course Generation</DialogTitle>
+            <DialogDescription>
+              Use AI to generate a comprehensive cybersecurity training course
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="topic">Course Topic</Label>
+              <Input
+                id="topic"
+                placeholder="e.g., Ransomware Protection, Cloud Security..."
+                value={generateFormData.topic}
+                onChange={(e) => setGenerateFormData({...generateFormData, topic: e.target.value})}
+                data-testid="input-course-topic"
+              />
+            </div>
+            
+            <div>
+              <Label htmlFor="difficulty">Difficulty Level</Label>
+              <Select 
+                value={generateFormData.difficulty}
+                onValueChange={(value) => setGenerateFormData({...generateFormData, difficulty: value})}
+              >
+                <SelectTrigger id="difficulty" data-testid="select-difficulty">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="beginner">Beginner</SelectItem>
+                  <SelectItem value="intermediate">Intermediate</SelectItem>
+                  <SelectItem value="advanced">Advanced</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div>
+              <Label htmlFor="modules">Number of Modules</Label>
+              <Select 
+                value={generateFormData.modules.toString()}
+                onValueChange={(value) => setGenerateFormData({...generateFormData, modules: parseInt(value)})}
+              >
+                <SelectTrigger id="modules" data-testid="select-modules">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="3">3 Modules</SelectItem>
+                  <SelectItem value="5">5 Modules</SelectItem>
+                  <SelectItem value="7">7 Modules</SelectItem>
+                  <SelectItem value="10">10 Modules</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div className="flex justify-end space-x-2 pt-4">
+              <Button 
+                variant="outline" 
+                onClick={() => setShowGenerateDialog(false)}
+                disabled={generateCourseMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button 
+                onClick={handleGenerateCourse}
+                disabled={generateCourseMutation.isPending}
+                data-testid="button-generate-course"
+              >
+                {generateCourseMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <Wand2 className="w-4 h-4 mr-2" />
+                    Generate Course
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

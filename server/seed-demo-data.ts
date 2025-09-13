@@ -14,10 +14,9 @@ async function seedDemoData() {
     }
 
     // Create Super Admin
-    const superAdminPassword = await authService.hashPassword('admin123');
     const superAdmin = await storage.createUser({
       email: 'admin@cyberaware.com',
-      passwordHash: superAdminPassword,
+      password: 'admin123',
       firstName: 'Super',
       lastName: 'Admin',
       role: 'super_admin',
@@ -28,10 +27,9 @@ async function seedDemoData() {
     });
 
     // Create Client Admin for TechCorp
-    const clientAdminPassword = await authService.hashPassword('admin123');
     const clientAdmin = await storage.createUser({
       email: 'admin@techcorp.com',
-      passwordHash: clientAdminPassword,
+      password: 'admin123',
       firstName: 'Tech',
       lastName: 'Administrator',
       role: 'client_admin',
@@ -42,10 +40,9 @@ async function seedDemoData() {
     });
 
     // Create End User for TechCorp
-    const endUserPassword = await authService.hashPassword('user123');
     const endUser = await storage.createUser({
       email: 'user@techcorp.com',
-      passwordHash: endUserPassword,
+      password: 'user123',
       firstName: 'John',
       lastName: 'Employee',
       role: 'end_user',
@@ -176,6 +173,517 @@ async function seedDemoData() {
     });
 
     console.log('✅ Sample course created: Phishing Awareness Training');
+
+    // Course 2: Password Security Best Practices
+    const passwordCourse = await storage.createCourse({
+      clientId: techCorpClient.id,
+      title: 'Password Security Best Practices',
+      description: 'Master the art of creating and managing secure passwords to protect your accounts',
+      content: {
+        modules: [
+          {
+            id: 'pass-module-1',
+            title: 'Understanding Password Threats',
+            content: `
+              <h2>The Password Security Landscape</h2>
+              <p>In today's digital world, passwords are the first line of defense against unauthorized access to your accounts and sensitive information.</p>
+              
+              <h3>Common Password Threats:</h3>
+              <ul>
+                <li><strong>Brute Force Attacks:</strong> Automated attempts to guess your password by trying millions of combinations</li>
+                <li><strong>Dictionary Attacks:</strong> Using common words and phrases to crack passwords</li>
+                <li><strong>Rainbow Table Attacks:</strong> Pre-computed hash lookups to reverse engineer passwords</li>
+                <li><strong>Credential Stuffing:</strong> Using leaked passwords from one breach to access other accounts</li>
+                <li><strong>Social Engineering:</strong> Tricking users into revealing their passwords</li>
+              </ul>
+              
+              <h3>The Cost of Weak Passwords:</h3>
+              <ul>
+                <li>80% of data breaches involve compromised passwords</li>
+                <li>Average cost of a data breach: $4.35 million</li>
+                <li>60% of people reuse passwords across multiple accounts</li>
+                <li>The most common password is still "123456"</li>
+              </ul>
+              
+              <h3>Password Attack Methods:</h3>
+              <ul>
+                <li><strong>Keyloggers:</strong> Malware that records your keystrokes</li>
+                <li><strong>Phishing:</strong> Fake websites that steal your credentials</li>
+                <li><strong>Shoulder Surfing:</strong> Watching someone type their password</li>
+                <li><strong>Password Spraying:</strong> Trying common passwords across many accounts</li>
+              </ul>
+            `,
+            duration: 15,
+            quiz: {
+              questions: [
+                {
+                  question: 'What percentage of data breaches involve compromised passwords?',
+                  options: ['20%', '50%', '80%', '95%'],
+                  correctAnswer: 2
+                },
+                {
+                  question: 'Which attack uses pre-computed hashes to crack passwords?',
+                  options: ['Dictionary Attack', 'Rainbow Table Attack', 'Brute Force Attack', 'Social Engineering'],
+                  correctAnswer: 1
+                },
+                {
+                  question: 'What is credential stuffing?',
+                  options: [
+                    'Creating fake credentials',
+                    'Using leaked passwords to access other accounts',
+                    'Storing credentials insecurely',
+                    'Sharing credentials with others'
+                  ],
+                  correctAnswer: 1
+                }
+              ]
+            }
+          },
+          {
+            id: 'pass-module-2',
+            title: 'Creating Strong Passwords',
+            content: `
+              <h2>Building Unbreakable Passwords</h2>
+              <p>A strong password is your first defense against cyber attacks. Learn how to create passwords that are both secure and memorable.</p>
+              
+              <h3>Password Strength Criteria:</h3>
+              <ul>
+                <li><strong>Length:</strong> Minimum 12 characters, ideally 16 or more</li>
+                <li><strong>Complexity:</strong> Mix of uppercase, lowercase, numbers, and symbols</li>
+                <li><strong>Unpredictability:</strong> Avoid dictionary words and personal information</li>
+                <li><strong>Uniqueness:</strong> Different password for every account</li>
+              </ul>
+              
+              <h3>Password Creation Techniques:</h3>
+              
+              <h4>1. Passphrase Method:</h4>
+              <p>Combine random words with numbers and symbols</p>
+              <p>Example: Coffee!Purple7Telescope@Moon</p>
+              
+              <h4>2. Sentence Method:</h4>
+              <p>Take the first letter of each word in a memorable sentence</p>
+              <p>Example: "I love to eat pizza on Fridays at 8pm!" becomes "Il2epoF@8p!"</p>
+              
+              <h4>3. Substitution Method:</h4>
+              <p>Replace letters with numbers and symbols</p>
+              <p>Example: "SecurePassword" becomes "S3cur3P@$$w0rd"</p>
+              
+              <h3>What to Avoid:</h3>
+              <ul>
+                <li>Personal information (birthdays, names, addresses)</li>
+                <li>Common passwords (password123, qwerty, admin)</li>
+                <li>Dictionary words without modification</li>
+                <li>Keyboard patterns (asdfgh, 123456)</li>
+                <li>Repeated characters (aaaaaa, 111111)</li>
+              </ul>
+              
+              <h3>Testing Password Strength:</h3>
+              <p>A strong password should take billions of years to crack with current technology. Test your passwords with reputable strength checkers, but never enter your actual password online.</p>
+            `,
+            duration: 20,
+            quiz: {
+              questions: [
+                {
+                  question: 'What is the minimum recommended password length for strong security?',
+                  options: ['6 characters', '8 characters', '12 characters', '20 characters'],
+                  correctAnswer: 2
+                },
+                {
+                  question: 'Which password creation method uses the first letters of a sentence?',
+                  options: ['Passphrase Method', 'Sentence Method', 'Substitution Method', 'Dictionary Method'],
+                  correctAnswer: 1
+                },
+                {
+                  question: 'Which of these makes the strongest password?',
+                  options: [
+                    'YourName2024',
+                    'P@ssword123',
+                    'Coffee!Purple7Telescope@Moon',
+                    'qwertyuiop'
+                  ],
+                  correctAnswer: 2
+                }
+              ]
+            }
+          },
+          {
+            id: 'pass-module-3',
+            title: 'Password Management Solutions',
+            content: `
+              <h2>Managing Passwords Effectively</h2>
+              <p>With dozens of online accounts, managing unique, strong passwords for each is challenging. Learn about tools and strategies to maintain password security.</p>
+              
+              <h3>Password Managers:</h3>
+              <p>Password managers are encrypted vaults that store and auto-fill your passwords.</p>
+              
+              <h4>Benefits:</h4>
+              <ul>
+                <li>Generate strong, unique passwords automatically</li>
+                <li>Store unlimited passwords securely</li>
+                <li>Auto-fill credentials on websites</li>
+                <li>Sync across all your devices</li>
+                <li>Secure password sharing with team members</li>
+                <li>Alert you to compromised passwords</li>
+              </ul>
+              
+              <h4>Popular Password Managers:</h4>
+              <ul>
+                <li><strong>1Password:</strong> Enterprise-friendly with excellent team features</li>
+                <li><strong>Bitwarden:</strong> Open-source with free tier available</li>
+                <li><strong>LastPass:</strong> User-friendly with good browser integration</li>
+                <li><strong>Dashlane:</strong> Includes VPN and dark web monitoring</li>
+              </ul>
+              
+              <h3>Two-Factor Authentication (2FA):</h3>
+              <p>Add an extra layer of security beyond passwords.</p>
+              
+              <h4>Types of 2FA:</h4>
+              <ul>
+                <li><strong>SMS/Text:</strong> Code sent to your phone (least secure)</li>
+                <li><strong>Authenticator Apps:</strong> Time-based codes (Google Authenticator, Authy)</li>
+                <li><strong>Hardware Keys:</strong> Physical USB devices (YubiKey, Titan)</li>
+                <li><strong>Biometric:</strong> Fingerprint or face recognition</li>
+              </ul>
+              
+              <h3>Password Hygiene Best Practices:</h3>
+              <ul>
+                <li>Change passwords immediately after a breach</li>
+                <li>Never share passwords via email or chat</li>
+                <li>Use unique passwords for every account</li>
+                <li>Enable 2FA wherever possible</li>
+                <li>Regularly review and update old passwords</li>
+                <li>Be cautious of password reset emails</li>
+              </ul>
+            `,
+            duration: 25,
+            quiz: {
+              questions: [
+                {
+                  question: 'What is the main benefit of using a password manager?',
+                  options: [
+                    'It remembers your birthday',
+                    'It generates and stores unique passwords for each account',
+                    'It makes passwords easier to guess',
+                    'It shares passwords publicly'
+                  ],
+                  correctAnswer: 1
+                },
+                {
+                  question: 'Which type of 2FA is considered most secure?',
+                  options: ['SMS/Text codes', 'Email verification', 'Hardware keys', 'Security questions'],
+                  correctAnswer: 2
+                },
+                {
+                  question: 'How often should you change passwords after a data breach?',
+                  options: ['Never', 'Once a year', 'Immediately', 'Every 5 years'],
+                  correctAnswer: 2
+                }
+              ]
+            }
+          }
+        ]
+      },
+      language: 'en',
+      difficulty: 'beginner',
+      estimatedDuration: 60,
+      status: 'published',
+      createdBy: clientAdmin.id
+    });
+
+    console.log('✅ Sample course created: Password Security Best Practices');
+
+    // Course 3: Social Engineering Defense
+    const socialEngineeringCourse = await storage.createCourse({
+      clientId: techCorpClient.id,
+      title: 'Social Engineering Defense',
+      description: 'Learn to recognize and defend against manipulation tactics used by cybercriminals',
+      content: {
+        modules: [
+          {
+            id: 'social-module-1',
+            title: 'Understanding Social Engineering',
+            content: `
+              <h2>The Human Factor in Cybersecurity</h2>
+              <p>Social engineering exploits human psychology rather than technical vulnerabilities. It's often easier to trick someone into giving away their password than to hack it.</p>
+              
+              <h3>What is Social Engineering?</h3>
+              <p>Social engineering is the art of manipulating people to divulge confidential information or perform actions that compromise security.</p>
+              
+              <h3>Why Social Engineering Works:</h3>
+              <ul>
+                <li><strong>Trust:</strong> Humans naturally want to trust others</li>
+                <li><strong>Fear:</strong> Threats create urgency and cloud judgment</li>
+                <li><strong>Authority:</strong> People comply with perceived authority figures</li>
+                <li><strong>Reciprocity:</strong> We feel obligated to return favors</li>
+                <li><strong>Social Proof:</strong> We follow what others are doing</li>
+                <li><strong>Scarcity:</strong> Limited availability drives action</li>
+              </ul>
+              
+              <h3>Common Social Engineering Attacks:</h3>
+              <ul>
+                <li><strong>Pretexting:</strong> Creating false scenarios to obtain information</li>
+                <li><strong>Baiting:</strong> Offering something enticing to spark curiosity</li>
+                <li><strong>Quid Pro Quo:</strong> Offering a service in exchange for information</li>
+                <li><strong>Tailgating:</strong> Following authorized personnel into restricted areas</li>
+                <li><strong>Watering Hole:</strong> Compromising websites frequently visited by targets</li>
+              </ul>
+              
+              <h3>Real-World Examples:</h3>
+              <ul>
+                <li>The "CEO Fraud" that cost companies $12.5 billion</li>
+                <li>The Twitter hack that compromised celebrity accounts</li>
+                <li>The MGM Resorts breach through a simple phone call</li>
+              </ul>
+            `,
+            duration: 20,
+            quiz: {
+              questions: [
+                {
+                  question: 'What does social engineering primarily exploit?',
+                  options: [
+                    'Computer vulnerabilities',
+                    'Network weaknesses',
+                    'Human psychology',
+                    'Software bugs'
+                  ],
+                  correctAnswer: 2
+                },
+                {
+                  question: 'Which psychological principle involves feeling obligated to return favors?',
+                  options: ['Authority', 'Reciprocity', 'Scarcity', 'Fear'],
+                  correctAnswer: 1
+                },
+                {
+                  question: 'What is "pretexting" in social engineering?',
+                  options: [
+                    'Sending text messages',
+                    'Creating false scenarios to obtain information',
+                    'Following someone into a building',
+                    'Offering free services'
+                  ],
+                  correctAnswer: 1
+                }
+              ]
+            }
+          },
+          {
+            id: 'social-module-2',
+            title: 'Recognizing Social Engineering Tactics',
+            content: `
+              <h2>Identifying Manipulation Attempts</h2>
+              <p>Learn to spot the red flags and warning signs of social engineering attacks before you become a victim.</p>
+              
+              <h3>Red Flags to Watch For:</h3>
+              
+              <h4>1. Urgency and Pressure:</h4>
+              <ul>
+                <li>"Act now or lose access to your account"</li>
+                <li>"This offer expires in 24 hours"</li>
+                <li>"Immediate action required"</li>
+              </ul>
+              
+              <h4>2. Unusual Requests:</h4>
+              <ul>
+                <li>Asking for passwords or sensitive information</li>
+                <li>Requesting wire transfers or gift cards</li>
+                <li>Bypassing normal procedures</li>
+              </ul>
+              
+              <h4>3. Emotional Manipulation:</h4>
+              <ul>
+                <li>Creating fear ("Your account has been compromised")</li>
+                <li>Exploiting greed ("You've won $1 million")</li>
+                <li>Using sympathy ("I need help urgently")</li>
+              </ul>
+              
+              <h3>Common Scenarios:</h3>
+              
+              <h4>Phone-Based Attacks (Vishing):</h4>
+              <ul>
+                <li>Fake tech support calls</li>
+                <li>IRS or government impersonation</li>
+                <li>Bank fraud alerts</li>
+                <li>Survey scams</li>
+              </ul>
+              
+              <h4>Email-Based Attacks:</h4>
+              <ul>
+                <li>CEO fraud/Business Email Compromise</li>
+                <li>Invoice scams</li>
+                <li>Charity fraud</li>
+                <li>Romance scams</li>
+              </ul>
+              
+              <h4>In-Person Attacks:</h4>
+              <ul>
+                <li>Impersonating service personnel</li>
+                <li>Tailgating into secure areas</li>
+                <li>Dumpster diving for information</li>
+                <li>Shoulder surfing</li>
+              </ul>
+              
+              <h3>Verification Techniques:</h3>
+              <ul>
+                <li>Independently verify caller identity</li>
+                <li>Use known contact information, not provided numbers</li>
+                <li>Check email addresses carefully</li>
+                <li>Verify requests through separate channels</li>
+                <li>When in doubt, say no and verify</li>
+              </ul>
+            `,
+            duration: 25,
+            quiz: {
+              questions: [
+                {
+                  question: 'Which is a common red flag in social engineering attacks?',
+                  options: [
+                    'Taking time to verify information',
+                    'Following normal procedures',
+                    'Creating artificial urgency',
+                    'Using official channels'
+                  ],
+                  correctAnswer: 2
+                },
+                {
+                  question: 'What should you do when receiving an unusual request from your "CEO"?',
+                  options: [
+                    'Comply immediately',
+                    'Verify through a separate channel',
+                    'Reply to the email',
+                    'Ignore it'
+                  ],
+                  correctAnswer: 1
+                },
+                {
+                  question: 'What is "vishing"?',
+                  options: [
+                    'Video conferencing scam',
+                    'Voice/phone-based social engineering',
+                    'Visiting malicious websites',
+                    'Virtual reality hacking'
+                  ],
+                  correctAnswer: 1
+                }
+              ]
+            }
+          },
+          {
+            id: 'social-module-3',
+            title: 'Building Your Defense Strategy',
+            content: `
+              <h2>Protecting Yourself and Your Organization</h2>
+              <p>Develop a comprehensive defense strategy against social engineering attacks through awareness, policies, and technical controls.</p>
+              
+              <h3>Personal Defense Strategies:</h3>
+              
+              <h4>1. Healthy Skepticism:</h4>
+              <ul>
+                <li>Question unexpected requests</li>
+                <li>Verify identities independently</li>
+                <li>Don't trust caller ID or email addresses alone</li>
+                <li>Be suspicious of unsolicited help</li>
+              </ul>
+              
+              <h4>2. Information Protection:</h4>
+              <ul>
+                <li>Limit personal information on social media</li>
+                <li>Be cautious about survey participation</li>
+                <li>Shred sensitive documents</li>
+                <li>Use privacy settings effectively</li>
+              </ul>
+              
+              <h4>3. Communication Security:</h4>
+              <ul>
+                <li>Never share passwords or PINs</li>
+                <li>Avoid discussing sensitive information in public</li>
+                <li>Use encrypted communication for sensitive data</li>
+                <li>Be aware of your surroundings</li>
+              </ul>
+              
+              <h3>Organizational Defenses:</h3>
+              
+              <h4>Security Policies:</h4>
+              <ul>
+                <li>Clear information classification guidelines</li>
+                <li>Visitor management procedures</li>
+                <li>Incident reporting protocols</li>
+                <li>Regular security awareness training</li>
+              </ul>
+              
+              <h4>Technical Controls:</h4>
+              <ul>
+                <li>Email filtering and anti-phishing tools</li>
+                <li>Multi-factor authentication</li>
+                <li>Access control systems</li>
+                <li>Security monitoring and logging</li>
+              </ul>
+              
+              <h3>Incident Response:</h3>
+              <p>If you suspect you've been targeted:</p>
+              <ol>
+                <li>Don't panic or feel embarrassed</li>
+                <li>Stop all communication with the attacker</li>
+                <li>Report to IT security immediately</li>
+                <li>Change potentially compromised passwords</li>
+                <li>Monitor accounts for suspicious activity</li>
+                <li>Document everything for investigation</li>
+              </ol>
+              
+              <h3>Creating a Security Culture:</h3>
+              <ul>
+                <li>Encourage reporting without blame</li>
+                <li>Regular security awareness training</li>
+                <li>Simulated phishing exercises</li>
+                <li>Reward security-conscious behavior</li>
+                <li>Share lessons learned from incidents</li>
+              </ul>
+            `,
+            duration: 30,
+            quiz: {
+              questions: [
+                {
+                  question: 'What is the first step if you suspect you\'ve been targeted by social engineering?',
+                  options: [
+                    'Delete all evidence',
+                    'Confront the attacker',
+                    'Stop all communication with the attacker',
+                    'Post about it on social media'
+                  ],
+                  correctAnswer: 2
+                },
+                {
+                  question: 'Which is an effective organizational defense against social engineering?',
+                  options: [
+                    'Hiding all company information',
+                    'Regular security awareness training',
+                    'Avoiding all external communication',
+                    'Trusting all employees completely'
+                  ],
+                  correctAnswer: 1
+                },
+                {
+                  question: 'What should you do with sensitive documents you no longer need?',
+                  options: [
+                    'Throw them in the trash',
+                    'Leave them on your desk',
+                    'Shred them',
+                    'Give them to anyone who asks'
+                  ],
+                  correctAnswer: 2
+                }
+              ]
+            }
+          }
+        ]
+      },
+      language: 'en',
+      difficulty: 'intermediate',
+      estimatedDuration: 75,
+      status: 'published',
+      createdBy: clientAdmin.id
+    });
+
+    console.log('✅ Sample course created: Social Engineering Defense');
 
     // Create sample email templates
     const phishingTemplate = await storage.createEmailTemplate({

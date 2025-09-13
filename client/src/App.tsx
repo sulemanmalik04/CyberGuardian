@@ -7,6 +7,8 @@ import { useAuth, AuthProvider } from "@/hooks/use-auth";
 import Landing from "@/pages/landing";
 import Login from "@/pages/login";
 import Dashboard from "@/pages/dashboard";
+import PhishingSimulation from "@/pages/phishing-simulation";
+import PhishingReported from "@/pages/phishing-reported";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 
@@ -48,6 +50,9 @@ function Router() {
           <Dashboard />
         </ProtectedRoute>
       </Route>
+      {/* Phishing simulation pages - public access for tracking */}
+      <Route path="/phishing-simulation" component={PhishingSimulation} />
+      <Route path="/phishing-reported" component={PhishingReported} />
       {/* Fallback to 404 */}
       <Route component={NotFound} />
     </Switch>
