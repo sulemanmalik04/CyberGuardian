@@ -1,28 +1,33 @@
-import AWS from 'aws-sdk';
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command, HeadObjectCommand, CopyObjectCommand, DeleteObjectsCommand, paginateListObjectsV2 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 
-const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID;
-const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY;
 const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
 const BUCKET_NAME = process.env.S3_BUCKET_NAME || 'cyberaware-platform-assets';
 const isDevelopment = process.env.NODE_ENV === 'development';
 
-// Configure AWS only if credentials are available
-let s3: AWS.S3 | null = null;
+// Configure AWS S3 client using default provider chain
+// This supports environment variables, IAM roles, AWS credentials file, etc.
+let s3Client: S3Client | null = null;
 
-if (AWS_ACCESS_KEY_ID && AWS_SECRET_ACCESS_KEY) {
-  AWS.config.update({
-    accessKeyId: AWS_ACCESS_KEY_ID,
-    secretAccessKey: AWS_SECRET_ACCESS_KEY,
+try {
+  s3Client = new S3Client({
     region: AWS_REGION
+    // Credentials are automatically loaded from:
+    // 1. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN)
+    // 2. IAM roles for EC2/ECS/Lambda
+    // 3. AWS credentials file (~/.aws/credentials)
+    // 4. IAM Identity Center (SSO)
   });
-  s3 = new AWS.S3({
-    signatureVersion: 'v4',
-    region: AWS_REGION
-  });
-} else if (!isDevelopment) {
-  throw new Error("AWS credentials must be set in production");
+} catch (error) {
+  if (!isDevelopment) {
+    console.error('Failed to initialize S3 client:', error);
+    throw new Error("AWS S3 client initialization failed in production");
+  }
+  // In development, S3 might not be configured - graceful degradation
+  console.warn('S3 client not initialized - file operations will be disabled');
 }
 
 // File type configurations
@@ -110,7 +115,7 @@ class S3Service {
   }
 
   async uploadFile(file: UploadFile, options: UploadOptions): Promise<{ url: string; key: string }> {
-    if (!s3) {
+    if (!s3Client) {
       throw new Error('AWS S3 not configured. Please set AWS credentials.');
     }
     
@@ -121,7 +126,7 @@ class S3Service {
       const fileName = `${uuidv4()}${fileExtension}`;
       const key = this.generateTenantKey(options.clientId, options.fileType, fileName);
 
-      const uploadParams: AWS.S3.PutObjectRequest = {
+      const uploadParams = {
         Bucket: BUCKET_NAME,
         Key: key,
         Body: file.buffer,
@@ -133,17 +138,20 @@ class S3Service {
           'original-name': file.originalname,
           ...options.metadata
         }
-      };
+      } as any;
 
       // Only set ACL if explicitly public, otherwise use bucket default (private)
       if (options.isPublic) {
         uploadParams.ACL = 'public-read';
       }
 
-      const result = await s3.upload(uploadParams).promise();
+      const command = new PutObjectCommand(uploadParams);
+      await s3Client.send(command);
+      
+      const url = `https://${BUCKET_NAME}.s3.${AWS_REGION}.amazonaws.com/${key}`;
       
       return {
-        url: result.Location,
+        url,
         key
       };
     } catch (error) {
@@ -207,7 +215,7 @@ class S3Service {
     key: string, 
     options: PresignedUrlOptions // SECURITY: clientId now required
   ): Promise<string> {
-    if (!s3) {
+    if (!s3Client) {
       throw new Error('AWS S3 not configured. Please set AWS credentials.');
     }
 
@@ -217,21 +225,26 @@ class S3Service {
     }
     
     try {
-      const params: any = {
+      const commandParams: any = {
         Bucket: BUCKET_NAME,
         Key: key,
-        Expires: options.expiresIn || 3600 // 1 hour default
       };
 
       if (options.operation === 'putObject') {
         if (options.contentType) {
-          params.ContentType = options.contentType;
+          commandParams.ContentType = options.contentType;
         }
         // SECURITY: Force server-side encryption on uploads
-        params.ServerSideEncryption = 'AES256';
+        commandParams.ServerSideEncryption = 'AES256';
       }
 
-      return s3.getSignedUrl(options.operation, params);
+      const command = options.operation === 'putObject' 
+        ? new PutObjectCommand(commandParams)
+        : new GetObjectCommand(commandParams);
+
+      return await getSignedUrl(s3Client, command, { 
+        expiresIn: options.expiresIn || 3600 // 1 hour default
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       throw new Error(`Presigned URL generation failed: ${errorMessage}`);
@@ -248,7 +261,7 @@ class S3Service {
   ): Promise<{ url: string; key: string }> {
     console.warn('⚠️  generatePresignedUploadUrl is deprecated. Use generatePostPolicy for better security.');
     
-    if (!s3) {
+    if (!s3Client) {
       throw new Error('AWS S3 not configured. Please set AWS credentials.');
     }
 
@@ -270,9 +283,9 @@ class S3Service {
     return { url, key };
   }
 
-  // SECURITY: New secure method using POST policies with content-length-range limits
+  // SECURITY: Use AWS SDK's createPresignedPost for secure upload policies
   async generatePostPolicy(options: PostPolicyOptions): Promise<PostPolicyResult> {
-    if (!s3) {
+    if (!s3Client) {
       throw new Error('AWS S3 not configured. Please set AWS credentials.');
     }
 
@@ -285,58 +298,16 @@ class S3Service {
     const fileName = `${uuidv4()}.${options.contentType.split('/')[1]}`;
     const key = this.generateTenantKey(options.clientId, options.fileType, fileName);
 
-    // Calculate expiration (default 1 hour)
-    const expiresIn = options.expiresIn || 3600;
-    const expirationDate = new Date();
-    expirationDate.setSeconds(expirationDate.getSeconds() + expiresIn);
-
     // Use provided max size or config default
     const maxSize = options.maxSizeBytes || config.maxSize;
 
     try {
-      // SECURITY: Create POST policy with strict conditions
-      const policyDocument = {
-        expiration: expirationDate.toISOString(),
-        conditions: [
-          { bucket: BUCKET_NAME },
-          { key },
-          { 'Content-Type': options.contentType },
-          // SECURITY: Enforce file size limits to prevent DoS/cost attacks
-          ['content-length-range', 1, maxSize],
-          // SECURITY: Force server-side encryption
-          { 'x-amz-server-side-encryption': 'AES256' },
-          // SECURITY: Add client metadata for audit trails
-          { 'x-amz-meta-client-id': options.clientId },
-          { 'x-amz-meta-file-type': options.fileType }
-        ]
-      };
-
-      // Add optional metadata conditions
-      if (options.metadata) {
-        Object.entries(options.metadata).forEach(([metaKey, value]) => {
-          (policyDocument.conditions as any[]).push({ [`x-amz-meta-${metaKey}`]: value });
-        });
-      }
-
-      // Create policy document and sign it
-      const policyString = JSON.stringify(policyDocument);
-      const policyBase64 = Buffer.from(policyString).toString('base64');
-
-      // Create AWS Signature V4
-      const dateString = new Date().toISOString().split('T')[0].replace(/-/g, '');
-      const credential = `${AWS_ACCESS_KEY_ID}/${dateString}/${AWS_REGION}/s3/aws4_request`;
-
-      // Prepare form fields for POST request
+      // Prepare fields including metadata
       const fields: Record<string, string> = {
-        key,
         'Content-Type': options.contentType,
         'x-amz-server-side-encryption': 'AES256',
         'x-amz-meta-client-id': options.clientId,
-        'x-amz-meta-file-type': options.fileType,
-        policy: policyBase64,
-        'x-amz-algorithm': 'AWS4-HMAC-SHA256',
-        'x-amz-credential': credential,
-        'x-amz-date': new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
+        'x-amz-meta-file-type': options.fileType
       };
 
       // Add optional metadata fields
@@ -346,17 +317,33 @@ class S3Service {
         });
       }
 
-      // Create signature using crypto
-      const crypto = require('crypto');
-      const signingKey = this.getSigningKey(dateString, AWS_SECRET_ACCESS_KEY!, AWS_REGION, 's3');
-      const signature = crypto.createHmac('sha256', signingKey).update(policyBase64).digest('hex');
-      fields['x-amz-signature'] = signature;
+      // Prepare conditions for POST policy
+      const conditions: any[] = [
+        // SECURITY: Enforce file size limits to prevent DoS/cost attacks
+        ['content-length-range', 1, maxSize]
+      ];
+
+      // Add optional metadata conditions
+      if (options.metadata) {
+        Object.entries(options.metadata).forEach(([metaKey, value]) => {
+          conditions.push(['starts-with', `$x-amz-meta-${metaKey}`, value]);
+        });
+      }
+
+      // Use AWS SDK's createPresignedPost for proper signing
+      const { url, fields: sdkFields } = await createPresignedPost(s3Client, {
+        Bucket: BUCKET_NAME,
+        Key: key,
+        Fields: fields,
+        Conditions: conditions,
+        Expires: options.expiresIn || 3600 // default 1 hour
+      });
 
       return {
-        url: `https://${BUCKET_NAME}.s3.${AWS_REGION}.amazonaws.com/`,
+        url,
         key,
-        fields,
-        conditions: policyDocument.conditions
+        fields: sdkFields,
+        conditions
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -364,17 +351,9 @@ class S3Service {
     }
   }
 
-  // Helper method for AWS Signature V4
-  private getSigningKey(dateString: string, secretAccessKey: string, region: string, service: string): Buffer {
-    const crypto = require('crypto');
-    const kDate = crypto.createHmac('sha256', 'AWS4' + secretAccessKey).update(dateString).digest();
-    const kRegion = crypto.createHmac('sha256', kDate).update(region).digest();
-    const kService = crypto.createHmac('sha256', kRegion).update(service).digest();
-    return crypto.createHmac('sha256', kService).update('aws4_request').digest();
-  }
 
   async deleteFile(key: string, clientId: string): Promise<void> {
-    if (!s3) {
+    if (!s3Client) {
       throw new Error('AWS S3 not configured. Please set AWS credentials.');
     }
     
@@ -384,12 +363,12 @@ class S3Service {
         throw new Error('Access denied: File does not belong to this client');
       }
 
-      const params = {
+      const command = new DeleteObjectCommand({
         Bucket: BUCKET_NAME,
         Key: key
-      };
+      });
 
-      await s3.deleteObject(params).promise();
+      await s3Client.send(command);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       throw new Error(`File deletion failed: ${errorMessage}`);
@@ -403,7 +382,7 @@ class S3Service {
     contentType?: string;
     metadata?: Record<string, string>;
   }>> {
-    if (!s3) {
+    if (!s3Client) {
       throw new Error('AWS S3 not configured. Please set AWS credentials.');
     }
     
@@ -412,45 +391,58 @@ class S3Service {
         ? `tenants/${clientId}/${FILE_TYPE_CONFIGS[fileType].folder}/`
         : `tenants/${clientId}/`;
 
-      const params = {
-        Bucket: BUCKET_NAME,
-        Prefix: prefix
-      };
+      const allFiles: Array<{
+        key: string;
+        size: number;
+        lastModified: Date;
+        contentType?: string;
+        metadata?: Record<string, string>;
+      }> = [];
 
-      const result = await s3.listObjectsV2(params).promise();
-      
-      if (!result.Contents) {
-        return [];
-      }
-
-      // Get detailed metadata for each file
-      const filesWithMetadata = await Promise.all(
-        result.Contents.map(async (obj) => {
-          try {
-            const headResult = await s3.headObject({
-              Bucket: BUCKET_NAME,
-              Key: obj.Key!
-            }).promise();
-            
-            return {
-              key: obj.Key!,
-              size: obj.Size || 0,
-              lastModified: obj.LastModified || new Date(),
-              contentType: headResult.ContentType,
-              metadata: headResult.Metadata
-            };
-          } catch {
-            // If head request fails, return basic info
-            return {
-              key: obj.Key!,
-              size: obj.Size || 0,
-              lastModified: obj.LastModified || new Date()
-            };
-          }
-        })
+      // Use paginator to handle large file lists properly
+      const paginator = paginateListObjectsV2(
+        { client: s3Client },
+        {
+          Bucket: BUCKET_NAME,
+          Prefix: prefix
+        }
       );
 
-      return filesWithMetadata;
+      for await (const page of paginator) {
+        if (!page.Contents) continue;
+
+        // Get detailed metadata for each file in this page
+        const filesWithMetadata = await Promise.all(
+          page.Contents.map(async (obj: any) => {
+            try {
+              const headCommand = new HeadObjectCommand({
+                Bucket: BUCKET_NAME,
+                Key: obj.Key!
+              });
+              const headResult = await s3Client!.send(headCommand);
+              
+              return {
+                key: obj.Key!,
+                size: obj.Size || 0,
+                lastModified: obj.LastModified || new Date(),
+                contentType: headResult.ContentType,
+                metadata: headResult.Metadata
+              };
+            } catch {
+              // If head request fails, return basic info
+              return {
+                key: obj.Key!,
+                size: obj.Size || 0,
+                lastModified: obj.LastModified || new Date()
+              };
+            }
+          })
+        );
+
+        allFiles.push(...filesWithMetadata);
+      }
+
+      return allFiles;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       throw new Error(`File listing failed: ${errorMessage}`);
@@ -463,7 +455,7 @@ class S3Service {
     sourceClientId: string,
     destClientId: string
   ): Promise<string> {
-    if (!s3) {
+    if (!s3Client) {
       throw new Error('AWS S3 not configured. Please set AWS credentials.');
     }
     
@@ -476,9 +468,10 @@ class S3Service {
         throw new Error('Access denied: Destination path does not belong to this client');
       }
 
-      const copyParams = {
+      const command = new CopyObjectCommand({
         Bucket: BUCKET_NAME,
-        CopySource: `${BUCKET_NAME}/${sourceKey}`,
+        // CRITICAL: Properly encode the CopySource for special characters
+        CopySource: encodeURIComponent(`${BUCKET_NAME}/${sourceKey}`),
         Key: destKey,
         ServerSideEncryption: 'AES256', // SECURITY: Ensure copied files are encrypted
         MetadataDirective: 'REPLACE' as const,
@@ -487,9 +480,9 @@ class S3Service {
           'copied-from': sourceKey,
           'copied-at': new Date().toISOString()
         }
-      };
+      });
 
-      await s3.copyObject(copyParams).promise();
+      await s3Client.send(command);
       
       // Generate a presigned URL for the copied file
       return this.generatePresignedUrl(destKey, { 
@@ -557,29 +550,42 @@ class S3Service {
 
   // Bulk delete files for a client (useful for cleanup)
   async deleteClientFiles(clientId: string, fileType?: keyof typeof FILE_TYPE_CONFIGS): Promise<void> {
-    if (!s3) {
+    if (!s3Client) {
       throw new Error('AWS S3 not configured. Please set AWS credentials.');
     }
 
     try {
-      const files = await this.listFiles(clientId, fileType);
-      
-      if (files.length === 0) {
-        return;
-      }
+      const prefix = fileType 
+        ? `tenants/${clientId}/${FILE_TYPE_CONFIGS[fileType].folder}/`
+        : `tenants/${clientId}/`;
 
-      // Delete in batches of 1000 (AWS limit)
-      const batchSize = 1000;
-      for (let i = 0; i < files.length; i += batchSize) {
-        const batch = files.slice(i, i + batchSize);
-        const deleteParams = {
+      // Use paginator to handle large file lists properly
+      const paginator = paginateListObjectsV2(
+        { client: s3Client },
+        {
           Bucket: BUCKET_NAME,
-          Delete: {
-            Objects: batch.map(file => ({ Key: file.key }))
-          }
-        };
+          Prefix: prefix
+        }
+      );
+
+      for await (const page of paginator) {
+        if (!page.Contents || page.Contents.length === 0) continue;
+
+        // Delete in batches of 1000 (AWS limit)
+        const batchSize = 1000;
+        const objects = page.Contents.map(obj => ({ Key: obj.Key! }));
         
-        await s3.deleteObjects(deleteParams).promise();
+        for (let i = 0; i < objects.length; i += batchSize) {
+          const batch = objects.slice(i, i + batchSize);
+          const command = new DeleteObjectsCommand({
+            Bucket: BUCKET_NAME,
+            Delete: {
+              Objects: batch
+            }
+          });
+          
+          await s3Client.send(command);
+        }
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
