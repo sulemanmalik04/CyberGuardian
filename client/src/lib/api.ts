@@ -201,6 +201,34 @@ export const api = {
     return response.json();
   },
 
+  async createClientWithAdmin(data: {
+    client: Partial<Client>;
+    admin: {
+      email: string;
+      firstName: string;
+      lastName: string;
+      password: string;
+    };
+  }): Promise<{ client: Client; admin: User }> {
+    const response = await apiRequest('POST', '/api/clients/with-admin', data);
+    return response.json();
+  },
+
+  async suspendClient(id: string): Promise<Client> {
+    const response = await apiRequest('POST', `/api/clients/${id}/suspend`);
+    return response.json();
+  },
+
+  async renewClient(id: string, expirationDate: string): Promise<Client> {
+    const response = await apiRequest('POST', `/api/clients/${id}/renew`, { expirationDate });
+    return response.json();
+  },
+
+  async checkSubdomainAvailability(subdomain: string): Promise<{ available: boolean }> {
+    const response = await apiRequest('GET', `/api/clients/check-subdomain/${subdomain}`);
+    return response.json();
+  },
+
   // Courses
   async getCourses(language?: string): Promise<Course[]> {
     const url = language ? `/api/courses?language=${language}` : '/api/courses';
@@ -287,7 +315,7 @@ export const api = {
   },
 
   // File Upload
-  async uploadLogo(file: File): Promise<{ logoUrl: string }> {
+  async uploadLogo(file: File): Promise<string> {
     const formData = new FormData();
     formData.append('logo', file);
     
@@ -299,6 +327,11 @@ export const api = {
       }
     });
     
-    return response.json();
+    if (!response.ok) {
+      throw new Error('Logo upload failed');
+    }
+    
+    const result = await response.json();
+    return result.url;
   }
 };

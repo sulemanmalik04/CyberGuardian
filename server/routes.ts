@@ -1294,6 +1294,167 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Atomic endpoint for creating client with admin user in a single transaction
+  app.post("/api/clients/with-admin", authenticateSuperAdmin, async (req, res) => {
+    try {
+      const requestData = z.object({
+        client: insertClientSchema,
+        admin: z.object({
+          email: z.string().email(),
+          firstName: z.string().min(1),
+          lastName: z.string().min(1),
+          password: z.string().min(8)
+        })
+      }).parse(req.body);
+
+      // Check subdomain uniqueness first
+      const existingClient = await storage.getClientBySubdomain(requestData.client.subdomain);
+      if (existingClient) {
+        return res.status(400).json({
+          message: 'Subdomain already exists',
+          field: 'subdomain'
+        });
+      }
+
+      // Start transaction by creating client first
+      const client = await storage.createClient(requestData.client);
+
+      try {
+        // Create admin user with hashed password
+        const hashedPassword = await bcrypt.hash(requestData.admin.password, 12);
+        
+        const admin = await storage.createUser({
+          email: requestData.admin.email,
+          firstName: requestData.admin.firstName,
+          lastName: requestData.admin.lastName,
+          passwordHash: hashedPassword,
+          role: 'client_admin',
+          clientId: client.id,
+          department: 'Administration',
+          language: 'en',
+          isActive: true
+        });
+
+        // Log successful creation
+        console.log(`✅ Client created atomically: ${client.name} (${client.subdomain}) with admin ${admin.email}`);
+
+        res.json({
+          client,
+          admin: {
+            id: admin.id,
+            email: admin.email,
+            firstName: admin.firstName,
+            lastName: admin.lastName,
+            role: admin.role,
+            department: admin.department,
+            language: admin.language,
+            isActive: admin.isActive,
+            createdAt: admin.createdAt
+          }
+        });
+      } catch (userError) {
+        // If user creation fails, clean up the client
+        console.error('🚨 Admin user creation failed, cleaning up client:', userError);
+        
+        try {
+          await storage.deleteClient(client.id);
+        } catch (cleanupError) {
+          console.error('🚨 Failed to cleanup client after user creation failure:', cleanupError);
+        }
+        
+        throw userError;
+      }
+    } catch (error) {
+      console.error('🚨 Atomic client creation failed:', error);
+      res.status(500).json({ 
+        message: 'Failed to create client and admin user', 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
+    }
+  });
+
+  // Check subdomain availability
+  app.get("/api/clients/check-subdomain/:subdomain", authenticateSuperAdmin, async (req, res) => {
+    try {
+      const { subdomain } = req.params;
+      
+      // Validate subdomain format
+      const subdomainSchema = z.string()
+        .min(2, 'Subdomain must be at least 2 characters')
+        .max(20, 'Subdomain must be no more than 20 characters')
+        .regex(/^[a-z0-9-]+$/, 'Subdomain can only contain lowercase letters, numbers, and hyphens')
+        .refine(val => !val.startsWith('-') && !val.endsWith('-'), 'Subdomain cannot start or end with a hyphen');
+      
+      const validatedSubdomain = subdomainSchema.parse(subdomain);
+      const existingClient = await storage.getClientBySubdomain(validatedSubdomain);
+      
+      res.json({ available: !existingClient });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          available: false, 
+          message: error.errors[0]?.message || 'Invalid subdomain format' 
+        });
+      }
+      res.status(500).json({ 
+        available: false,
+        message: 'Failed to check subdomain availability' 
+      });
+    }
+  });
+
+  // Suspend client license
+  app.post("/api/clients/:id/suspend", authenticateSuperAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      const client = await storage.updateClient(id, {
+        licenseStatus: 'suspended'
+      });
+      
+      if (!client) {
+        return res.status(404).json({ message: 'Client not found' });
+      }
+      
+      console.log(`⚠️ Client license suspended: ${client.name} (${client.subdomain})`);
+      res.json(client);
+    } catch (error) {
+      console.error('🚨 Failed to suspend client:', error);
+      res.status(500).json({ 
+        message: 'Failed to suspend client', 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
+    }
+  });
+
+  // Renew client license
+  app.post("/api/clients/:id/renew", authenticateSuperAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { expirationDate } = z.object({
+        expirationDate: z.string().datetime()
+      }).parse(req.body);
+      
+      const client = await storage.updateClient(id, {
+        licenseStatus: 'active',
+        expirationDate: new Date(expirationDate)
+      });
+      
+      if (!client) {
+        return res.status(404).json({ message: 'Client not found' });
+      }
+      
+      console.log(`✅ Client license renewed: ${client.name} (${client.subdomain}) until ${expirationDate}`);
+      res.json(client);
+    } catch (error) {
+      console.error('🚨 Failed to renew client:', error);
+      res.status(500).json({ 
+        message: 'Failed to renew client', 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
+    }
+  });
+
   app.put("/api/clients/:id", authenticateAdmin, async (req, res) => {
     try {
       const { id } = req.params;
@@ -1802,27 +1963,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const authReq = req as AuthenticatedRequest;
       
-      // SECURITY: Ensure user has clientId for tenant-based operations
-      if (!authReq.user.clientId) {
-        return res.status(403).json({ message: 'User not associated with a client' });
+      // SECURITY: Determine target client ID
+      let targetClientId = authReq.user.clientId;
+      
+      // Super admins can specify a client ID for uploading logos during client creation
+      if (authReq.user.role === 'super_admin' && req.body.clientId) {
+        targetClientId = req.body.clientId;
+      }
+      
+      if (!targetClientId) {
+        return res.status(400).json({ message: 'Client ID required' });
       }
 
       // Use the secure uploadLogo method with proper clientId
-      const logoUrl = await s3Service.uploadLogo(req.file, authReq.user.clientId);
+      const logoUrl = await s3Service.uploadLogo(req.file, targetClientId);
       
-      // Update client branding
-      const client = await storage.getClient(authReq.user.clientId);
-      if (client) {
-        await storage.updateClient(authReq.user.clientId, {
-          branding: {
-            ...client.branding,
-            logo: logoUrl
-          }
-        });
+      // For existing clients, update the branding (optional for creation flow)
+      if (authReq.user.clientId && authReq.user.clientId === targetClientId) {
+        const client = await storage.getClient(targetClientId);
+        if (client) {
+          await storage.updateClient(targetClientId, {
+            branding: {
+              ...client.branding,
+              logo: logoUrl
+            }
+          });
+        }
       }
 
-      res.json({ logoUrl });
+      res.json({ url: logoUrl });
     } catch (error) {
+      console.error('🚨 Logo upload failed:', error);
       res.status(500).json({ message: 'Logo upload failed', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });

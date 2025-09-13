@@ -39,6 +39,7 @@ export interface IStorage {
   getClientBySubdomain(subdomain: string): Promise<Client | undefined>;
   createClient(client: InsertClient): Promise<Client>;
   updateClient(id: string, updates: Partial<Client>): Promise<Client>;
+  deleteClient(id: string): Promise<Client>;
   getAllClients(): Promise<Client[]>;
   
   // Courses - SECURITY: All course methods now require client context
@@ -187,6 +188,43 @@ export class DatabaseStorage implements IStorage {
       .where(eq(clients.id, id))
       .returning();
     return updatedClient;
+  }
+
+  async deleteClient(id: string): Promise<Client> {
+    // First delete all related records to maintain referential integrity
+    // Delete user course progress for users in this client
+    await db.delete(userCourseProgress)
+      .where(inArray(
+        userCourseProgress.userId,
+        db.select({ id: users.id }).from(users).where(eq(users.clientId, id))
+      ));
+
+    // Delete analytics events for this client
+    await db.delete(analyticsEvents).where(eq(analyticsEvents.clientId, id));
+
+    // Delete phishing campaigns for this client
+    await db.delete(phishingCampaigns).where(eq(phishingCampaigns.clientId, id));
+
+    // Delete courses for this client
+    await db.delete(courses).where(eq(courses.clientId, id));
+
+    // Delete sessions for users in this client
+    await db.delete(sessions)
+      .where(inArray(
+        sessions.userId,
+        db.select({ id: users.id }).from(users).where(eq(users.clientId, id))
+      ));
+
+    // Delete users for this client
+    await db.delete(users).where(eq(users.clientId, id));
+
+    // Finally delete the client
+    const [deletedClient] = await db
+      .delete(clients)
+      .where(eq(clients.id, id))
+      .returning();
+      
+    return deletedClient;
   }
 
   async getAllClients(): Promise<Client[]> {
