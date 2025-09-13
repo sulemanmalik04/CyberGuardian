@@ -1647,6 +1647,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Quiz routes
+  app.post("/api/quiz/submit", authenticateToken, async (req, res) => {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      const { userId, courseId, moduleId, score, answers } = req.body;
+
+      // Users can only submit their own quiz scores
+      if (authReq.user.role === 'end_user' && userId !== authReq.user.id) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+
+      // Get or create user progress
+      let progress = await storage.getUserCourseProgress(userId, courseId);
+      
+      if (!progress) {
+        progress = await storage.createUserCourseProgress({
+          userId,
+          courseId,
+          progress: 0,
+          completedModules: [],
+          currentModule: 0,
+          quizScores: {},
+          isCompleted: false,
+          completedAt: null,
+          startedAt: new Date(),
+          lastAccessedAt: new Date()
+        });
+      }
+
+      // Update quiz scores
+      const updatedQuizScores = {
+        ...progress.quizScores,
+        [moduleId]: score
+      };
+
+      const updatedProgress = await storage.updateUserCourseProgress(userId, courseId, {
+        quizScores: updatedQuizScores,
+        lastAccessedAt: new Date()
+      });
+
+      // Create analytics event for quiz completion
+      await storage.createAnalyticsEvent({
+        clientId: authReq.user.clientId,
+        userId,
+        courseId,
+        eventType: 'quiz_completed',
+        metadata: {
+          moduleId,
+          score,
+          answers,
+          timeTaken: Date.now()
+        },
+        timestamp: new Date()
+      });
+
+      res.json(updatedProgress);
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to submit quiz', error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+  });
+
+  app.post("/api/quiz/generate", authenticateAdmin, async (req, res) => {
+    try {
+      const { moduleContent, questionCount = 5 } = req.body;
+
+      if (!moduleContent) {
+        return res.status(400).json({ message: 'Module content is required' });
+      }
+
+      const questions = await openaiService.generateQuizQuestions(moduleContent, questionCount);
+      res.json({ questions });
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to generate quiz questions', error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+  });
+
   // Phishing campaign routes
   app.get("/api/campaigns", authenticateAdmin, tenantMiddleware.allowSuperAdminWildcard(), async (req, res) => {
     try {

@@ -266,6 +266,26 @@ export const api = {
     return response.json();
   },
 
+  // Quiz Management
+  async submitQuizScore(userId: string, courseId: string, moduleId: string, score: number, answers: any[]): Promise<UserProgress> {
+    const response = await apiRequest('POST', '/api/quiz/submit', {
+      userId,
+      courseId,
+      moduleId,
+      score,
+      answers
+    });
+    return response.json();
+  },
+
+  async generateQuizForModule(moduleContent: string, questionCount?: number) {
+    const response = await apiRequest('POST', '/api/quiz/generate', {
+      moduleContent,
+      questionCount
+    });
+    return response.json();
+  },
+
   // Phishing Campaigns
   async getCampaigns(clientId?: string): Promise<PhishingCampaign[]> {
     const url = clientId ? `/api/campaigns?clientId=${clientId}` : '/api/campaigns';
