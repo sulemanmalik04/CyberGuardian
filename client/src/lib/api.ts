@@ -116,6 +116,83 @@ export interface AnalyticsEvent {
   timestamp: string;
 }
 
+export interface PlatformAnalytics {
+  summary: {
+    totalClients: number;
+    activeClients: number;
+    totalUsers: number;
+    totalActiveUsers: number;
+    platformEngagementRate: number;
+    totalCompletedCourses: number;
+    totalPhishingClicks: number;
+    totalPhishingReports: number;
+    phishingSuccessRate: number;
+  };
+  clients: Array<{
+    clientId: string;
+    clientName: string;
+    subdomain: string;
+    totalUsers: number;
+    activeUsers: number;
+    licenseStatus: string;
+    expirationDate: string | null;
+    completedCourses: number;
+    phishingClicks: number;
+    phishingReports: number;
+    lastActivity: string | null;
+  }>;
+  dateRange: {
+    start: string;
+    end: string;
+  };
+}
+
+export interface DepartmentAnalytics {
+  name: string;
+  totalUsers: number;
+  activeUsers: number;
+  completedCourses: number;
+  phishingClicks: number;
+  phishingReports: number;
+  avgQuizScore: number;
+  completionRate: number;
+  riskScore: number;
+}
+
+export interface AnalyticsSummary {
+  users: {
+    total: number;
+    active: number;
+    inactive: number;
+    engagementRate: number;
+  };
+  training: {
+    totalCourses: number;
+    completedCourses: number;
+    completionRate: number;
+    avgQuizScore: number;
+    quizzesTaken: number;
+  };
+  phishing: {
+    totalCampaigns: number;
+    activeCampaigns: number;
+    emailsSent: number;
+    emailsClicked: number;
+    emailsReported: number;
+    clickRate: number;
+    reportRate: number;
+  };
+  trends: {
+    weeklyActivity: number;
+    monthlyActivity: number;
+    weeklyGrowth: number;
+  };
+  dateRange: {
+    start: string;
+    end: string;
+  };
+}
+
 // API functions
 export const api = {
   // Authentication
@@ -318,6 +395,54 @@ export const api = {
     
     const response = await apiRequest('GET', url);
     return response.json();
+  },
+
+  async getPlatformAnalytics(startDate?: string, endDate?: string): Promise<PlatformAnalytics> {
+    const params = new URLSearchParams();
+    if (startDate) params.append('start', startDate);
+    if (endDate) params.append('end', endDate);
+    
+    const url = params.toString() ? `/api/analytics/platform?${params}` : '/api/analytics/platform';
+    const response = await apiRequest('GET', url);
+    return response.json();
+  },
+
+  async getDepartmentAnalytics(startDate?: string, endDate?: string): Promise<DepartmentAnalytics[]> {
+    const params = new URLSearchParams();
+    if (startDate) params.append('start', startDate);
+    if (endDate) params.append('end', endDate);
+    
+    const url = params.toString() ? `/api/analytics/departments?${params}` : '/api/analytics/departments';
+    const response = await apiRequest('GET', url);
+    return response.json();
+  },
+
+  async getAnalyticsSummary(startDate?: string, endDate?: string): Promise<AnalyticsSummary> {
+    const params = new URLSearchParams();
+    if (startDate) params.append('start', startDate);
+    if (endDate) params.append('end', endDate);
+    
+    const url = params.toString() ? `/api/analytics/summary?${params}` : '/api/analytics/summary';
+    const response = await apiRequest('GET', url);
+    return response.json();
+  },
+
+  async exportAnalyticsCSV(type: 'events' | 'users', startDate?: string, endDate?: string): Promise<Blob> {
+    const params = new URLSearchParams();
+    params.append('type', type);
+    if (startDate) params.append('start', startDate);
+    if (endDate) params.append('end', endDate);
+    
+    const response = await fetch(`/api/analytics/export/csv?${params}`, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to export analytics');
+    }
+    return response.blob();
   },
 
   // AI

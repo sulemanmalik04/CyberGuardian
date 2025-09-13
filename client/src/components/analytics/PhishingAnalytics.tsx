@@ -46,6 +46,7 @@ import {
 } from 'recharts';
 import { api, type AnalyticsEvent, type User, type PhishingCampaign } from '@/lib/api';
 import { format, subDays, startOfDay, endOfDay } from 'date-fns';
+import { useAnalyticsWebSocket } from '@/hooks/use-websocket';
 
 interface PhishingAnalyticsProps {
   dateRange?: string;
@@ -61,6 +62,14 @@ export default function PhishingAnalytics({ dateRange = '30', filters = {} }: Ph
   const [selectedCampaign, setSelectedCampaign] = useState('');
   const [selectedDepartment, setSelectedDepartment] = useState('');
   const [viewType, setViewType] = useState('overview');
+  
+  // Real-time updates via WebSocket
+  const { isConnected, latestEvent } = useAnalyticsWebSocket((event) => {
+    // Handle real-time phishing event updates
+    if (['email_opened', 'email_clicked', 'phishing_reported'].includes(event.eventType)) {
+      console.log('Real-time phishing event:', event);
+    }
+  });
 
   // Date range calculation
   const getDateRange = () => {

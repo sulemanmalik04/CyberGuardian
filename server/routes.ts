@@ -15,6 +15,7 @@ import csvParser from "csv-parser";
 import { Readable } from "stream";
 import crypto from "crypto";
 import { verify } from "@noble/ed25519";
+import { format, subDays } from "date-fns";
 // SECURITY: Import comprehensive tenant security utilities
 import { 
   tenantMiddleware, 
@@ -23,6 +24,7 @@ import {
   validateRequestBody, 
   logTenantAccess 
 } from "./tenant-security";
+import { broadcastAnalyticsUpdate, broadcastPlatformMetrics } from "./websocket";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -2025,6 +2027,292 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: 'Failed to fetch analytics', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
+
+  // Platform-wide analytics for super admin
+  app.get("/api/analytics/platform", authenticateSuperAdmin, async (req, res) => {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      const start = req.query.start ? new Date(req.query.start as string) : subDays(new Date(), 30);
+      const end = req.query.end ? new Date(req.query.end as string) : new Date();
+      
+      // Get all clients and their usage stats
+      const clients = await storage.getAllClients();
+      const clientStats = await Promise.all(clients.map(async (client) => {
+        const users = await storage.getUsersByClient(client.id);
+        const events = await storage.getAnalyticsEventsByClient(client.id, start, end);
+        
+        const activeUsers = new Set(events.map(e => e.userId)).size;
+        const completedCourses = events.filter(e => e.eventType === 'course_completed').length;
+        const phishingClicks = events.filter(e => e.eventType === 'email_clicked').length;
+        const phishingReports = events.filter(e => e.eventType === 'phishing_reported').length;
+        
+        return {
+          clientId: client.id,
+          clientName: client.name,
+          subdomain: client.subdomain,
+          totalUsers: users.length,
+          activeUsers,
+          licenseStatus: client.licenseStatus,
+          expirationDate: client.expirationDate,
+          completedCourses,
+          phishingClicks,
+          phishingReports,
+          lastActivity: events.length > 0 ? events[0].timestamp : null
+        };
+      }));
+      
+      // Calculate platform-wide metrics
+      const totalClients = clients.length;
+      const activeClients = clientStats.filter(c => c.activeUsers > 0).length;
+      const totalUsers = clientStats.reduce((sum, c) => sum + c.totalUsers, 0);
+      const totalActiveUsers = clientStats.reduce((sum, c) => sum + c.activeUsers, 0);
+      const totalCompletedCourses = clientStats.reduce((sum, c) => sum + c.completedCourses, 0);
+      const totalPhishingClicks = clientStats.reduce((sum, c) => sum + c.phishingClicks, 0);
+      const totalPhishingReports = clientStats.reduce((sum, c) => sum + c.phishingReports, 0);
+      
+      res.json({
+        summary: {
+          totalClients,
+          activeClients,
+          totalUsers,
+          totalActiveUsers,
+          platformEngagementRate: totalUsers > 0 ? Math.round((totalActiveUsers / totalUsers) * 100) : 0,
+          totalCompletedCourses,
+          totalPhishingClicks,
+          totalPhishingReports,
+          phishingSuccessRate: totalPhishingClicks > 0 ? 
+            Math.round((totalPhishingReports / totalPhishingClicks) * 100) : 0
+        },
+        clients: clientStats,
+        dateRange: { start, end }
+      });
+    } catch (error) {
+      console.error('Platform analytics error:', error);
+      res.status(500).json({ message: 'Failed to fetch platform analytics' });
+    }
+  });
+
+  // Department analytics
+  app.get("/api/analytics/departments", authenticateToken, tenantMiddleware.requireClientId(), async (req, res) => {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      const start = req.query.start ? new Date(req.query.start as string) : subDays(new Date(), 30);
+      const end = req.query.end ? new Date(req.query.end as string) : new Date();
+      
+      const users = await storage.getUsersByClient(authReq.validatedClientId!);
+      const events = await storage.getAnalyticsEventsByClient(authReq.validatedClientId!, start, end);
+      
+      // Group users by department
+      const departmentMap = new Map<string, any>();
+      
+      users.forEach(user => {
+        const dept = user.department || 'No Department';
+        if (!departmentMap.has(dept)) {
+          departmentMap.set(dept, {
+            name: dept,
+            totalUsers: 0,
+            activeUsers: new Set(),
+            completedCourses: 0,
+            phishingClicks: 0,
+            phishingReports: 0,
+            avgQuizScore: 0,
+            quizCount: 0
+          });
+        }
+        departmentMap.get(dept)!.totalUsers++;
+      });
+      
+      // Process events
+      events.forEach(event => {
+        const user = users.find(u => u.id === event.userId);
+        if (!user) return;
+        
+        const dept = user.department || 'No Department';
+        const deptData = departmentMap.get(dept)!;
+        
+        deptData.activeUsers.add(event.userId);
+        
+        if (event.eventType === 'course_completed') deptData.completedCourses++;
+        if (event.eventType === 'email_clicked') deptData.phishingClicks++;
+        if (event.eventType === 'phishing_reported') deptData.phishingReports++;
+        if (event.eventType === 'quiz_completed' && event.metadata?.score) {
+          deptData.avgQuizScore += event.metadata.score;
+          deptData.quizCount++;
+        }
+      });
+      
+      // Calculate final metrics
+      const departments = Array.from(departmentMap.values()).map(dept => ({
+        ...dept,
+        activeUsers: dept.activeUsers.size,
+        completionRate: dept.totalUsers > 0 ? 
+          Math.round((dept.completedCourses / (dept.totalUsers * 5)) * 100) : 0, // Assuming 5 courses per user
+        avgQuizScore: dept.quizCount > 0 ? 
+          Math.round(dept.avgQuizScore / dept.quizCount) : 0,
+        riskScore: calculateDepartmentRiskScore(dept)
+      }));
+      
+      res.json(departments);
+    } catch (error) {
+      console.error('Department analytics error:', error);
+      res.status(500).json({ message: 'Failed to fetch department analytics' });
+    }
+  });
+
+  function calculateDepartmentRiskScore(dept: any): number {
+    // Higher phishing clicks = higher risk
+    // More reports = lower risk
+    // Higher quiz scores = lower risk
+    const clickRate = dept.totalUsers > 0 ? (dept.phishingClicks / dept.totalUsers) * 50 : 0;
+    const reportRate = dept.phishingClicks > 0 ? (dept.phishingReports / dept.phishingClicks) * 30 : 30;
+    const quizFactor = dept.avgQuizScore > 0 ? (100 - dept.avgQuizScore) * 0.2 : 20;
+    
+    return Math.round(Math.max(0, Math.min(100, clickRate - reportRate + quizFactor)));
+  }
+
+  // Export analytics data as CSV
+  app.get("/api/analytics/export/csv", authenticateToken, tenantMiddleware.requireClientId(), async (req, res) => {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      const start = req.query.start ? new Date(req.query.start as string) : subDays(new Date(), 30);
+      const end = req.query.end ? new Date(req.query.end as string) : new Date();
+      const reportType = req.query.type as string || 'events';
+      
+      let csvData = '';
+      
+      if (reportType === 'events') {
+        const events = await storage.getAnalyticsEventsByClient(authReq.validatedClientId!, start, end);
+        const users = await storage.getUsersByClient(authReq.validatedClientId!);
+        
+        // CSV header
+        csvData = 'Date,Time,User,Department,Event Type,Campaign,Course,Details\n';
+        
+        events.forEach(event => {
+          const user = users.find(u => u.id === event.userId);
+          const date = new Date(event.timestamp);
+          csvData += `${format(date, 'yyyy-MM-dd')},${format(date, 'HH:mm:ss')},`;
+          csvData += `"${user ? `${user.firstName} ${user.lastName}` : 'Unknown'}",`;
+          csvData += `"${user?.department || 'N/A'}",`;
+          csvData += `"${event.eventType.replace('_', ' ')}",`;
+          csvData += `"${event.campaignId || 'N/A'}",`;
+          csvData += `"${event.courseId || 'N/A'}",`;
+          csvData += `"${JSON.stringify(event.metadata || {})}"`;
+          csvData += '\n';
+        });
+      } else if (reportType === 'users') {
+        const users = await storage.getUsersByClient(authReq.validatedClientId!);
+        const events = await storage.getAnalyticsEventsByClient(authReq.validatedClientId!, start, end);
+        
+        // CSV header
+        csvData = 'Name,Email,Department,Role,Courses Completed,Phishing Clicks,Phishing Reports,Risk Score\n';
+        
+        users.forEach(user => {
+          const userEvents = events.filter(e => e.userId === user.id);
+          const coursesCompleted = userEvents.filter(e => e.eventType === 'course_completed').length;
+          const phishingClicks = userEvents.filter(e => e.eventType === 'email_clicked').length;
+          const phishingReports = userEvents.filter(e => e.eventType === 'phishing_reported').length;
+          const riskScore = calculateUserRiskScore(phishingClicks, phishingReports, coursesCompleted);
+          
+          csvData += `"${user.firstName} ${user.lastName}",`;
+          csvData += `"${user.email}",`;
+          csvData += `"${user.department || 'N/A'}",`;
+          csvData += `"${user.role}",`;
+          csvData += `${coursesCompleted},`;
+          csvData += `${phishingClicks},`;
+          csvData += `${phishingReports},`;
+          csvData += `${riskScore}`;
+          csvData += '\n';
+        });
+      }
+      
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="analytics-${reportType}-${format(new Date(), 'yyyy-MM-dd')}.csv"`);
+      res.send(csvData);
+    } catch (error) {
+      console.error('Export error:', error);
+      res.status(500).json({ message: 'Failed to export analytics' });
+    }
+  });
+  
+  function calculateUserRiskScore(clicks: number, reports: number, completed: number): number {
+    const clickPenalty = clicks * 20;
+    const reportBonus = reports * 10;
+    const completionBonus = completed * 15;
+    return Math.max(0, Math.min(100, 50 + clickPenalty - reportBonus - completionBonus));
+  }
+
+  // Analytics summary endpoint
+  app.get("/api/analytics/summary", authenticateToken, tenantMiddleware.requireClientId(), async (req, res) => {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      const start = req.query.start ? new Date(req.query.start as string) : subDays(new Date(), 30);
+      const end = req.query.end ? new Date(req.query.end as string) : new Date();
+      
+      const [users, events, campaigns, courses] = await Promise.all([
+        storage.getUsersByClient(authReq.validatedClientId!),
+        storage.getAnalyticsEventsByClient(authReq.validatedClientId!, start, end),
+        storage.getCampaignsByClient(authReq.validatedClientId!),
+        storage.getPublishedCoursesByClient(authReq.validatedClientId!)
+      ]);
+      
+      // Calculate summary metrics
+      const activeUsers = new Set(events.map(e => e.userId)).size;
+      const completedCourses = events.filter(e => e.eventType === 'course_completed').length;
+      const emailsSent = events.filter(e => e.eventType === 'email_sent').length;
+      const emailsClicked = events.filter(e => e.eventType === 'email_clicked').length;
+      const emailsReported = events.filter(e => e.eventType === 'phishing_reported').length;
+      const quizEvents = events.filter(e => e.eventType === 'quiz_completed');
+      
+      const avgQuizScore = quizEvents.length > 0 ?
+        Math.round(quizEvents.reduce((sum, e) => sum + (e.metadata?.score || 0), 0) / quizEvents.length) : 0;
+      
+      res.json({
+        users: {
+          total: users.length,
+          active: activeUsers,
+          inactive: users.length - activeUsers,
+          engagementRate: users.length > 0 ? Math.round((activeUsers / users.length) * 100) : 0
+        },
+        training: {
+          totalCourses: courses.length,
+          completedCourses,
+          completionRate: activeUsers > 0 ? Math.round((completedCourses / (activeUsers * courses.length)) * 100) : 0,
+          avgQuizScore,
+          quizzesTaken: quizEvents.length
+        },
+        phishing: {
+          totalCampaigns: campaigns.length,
+          activeCampaigns: campaigns.filter(c => c.status === 'active').length,
+          emailsSent,
+          emailsClicked,
+          emailsReported,
+          clickRate: emailsSent > 0 ? Math.round((emailsClicked / emailsSent) * 100 * 10) / 10 : 0,
+          reportRate: emailsClicked > 0 ? Math.round((emailsReported / emailsClicked) * 100 * 10) / 10 : 0
+        },
+        trends: calculateTrends(events),
+        dateRange: { start, end }
+      });
+    } catch (error) {
+      console.error('Summary analytics error:', error);
+      res.status(500).json({ message: 'Failed to fetch summary analytics' });
+    }
+  });
+  
+  function calculateTrends(events: any[]): any {
+    const now = new Date();
+    const lastWeek = subDays(now, 7);
+    const lastMonth = subDays(now, 30);
+    
+    const weekEvents = events.filter(e => new Date(e.timestamp) >= lastWeek);
+    const monthEvents = events.filter(e => new Date(e.timestamp) >= lastMonth);
+    
+    return {
+      weeklyActivity: weekEvents.length,
+      monthlyActivity: monthEvents.length,
+      weeklyGrowth: monthEvents.length > 0 ? 
+        Math.round(((weekEvents.length * 4 - monthEvents.length) / monthEvents.length) * 100) : 0
+    };
+  }
 
   // AI chatbot routes
   app.post("/api/ai/chat", authenticateToken, async (req, res) => {

@@ -42,11 +42,14 @@ import {
   ResponsiveContainer,
   ComposedChart
 } from 'recharts';
-import { api, type AnalyticsEvent, type User } from '@/lib/api';
+import { api, type AnalyticsEvent, type User, type PlatformAnalytics, type DepartmentAnalytics, type AnalyticsSummary } from '@/lib/api';
 import { format, subDays, startOfDay, endOfDay } from 'date-fns';
+import { useAnalyticsWebSocket } from '@/hooks/use-websocket';
+import { useToast } from '@/hooks/use-toast';
 
 export default function AnalyticsDashboard() {
   const { user: currentUser } = useAuth();
+  const { toast } = useToast();
   const [dateRange, setDateRange] = useState('30');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -62,6 +65,12 @@ export default function AnalyticsDashboard() {
     eventType: '',
     datePreset: '30',
     showInactive: false
+  });
+  
+  // WebSocket for real-time updates
+  const { isConnected, latestEvent, platformMetrics } = useAnalyticsWebSocket((event) => {
+    console.log('Real-time analytics update:', event);
+    // Optionally refresh queries when new data arrives
   });
 
   // Calculate date range
@@ -117,6 +126,25 @@ export default function AnalyticsDashboard() {
     queryKey: ['clients'],
     queryFn: api.getClients,
     enabled: currentUser?.role === 'super_admin'
+  });
+  
+  // New analytics endpoints
+  const { data: platformAnalytics, isLoading: platformLoading } = useQuery({
+    queryKey: ['platform-analytics', rangeStart, rangeEnd],
+    queryFn: () => api.getPlatformAnalytics(rangeStart, rangeEnd),
+    enabled: currentUser?.role === 'super_admin'
+  });
+  
+  const { data: departmentAnalytics = [], isLoading: deptLoading } = useQuery({
+    queryKey: ['department-analytics', currentUser?.clientId, rangeStart, rangeEnd],
+    queryFn: () => api.getDepartmentAnalytics(rangeStart, rangeEnd),
+    enabled: !!currentUser && currentUser.role === 'client_admin'
+  });
+  
+  const { data: analyticsSummary, isLoading: summaryLoading } = useQuery({
+    queryKey: ['analytics-summary', currentUser?.clientId, rangeStart, rangeEnd],
+    queryFn: () => api.getAnalyticsSummary(rangeStart, rangeEnd),
+    enabled: !!currentUser
   });
 
   // Apply filters to analytics events
@@ -479,6 +507,31 @@ export default function AnalyticsDashboard() {
     a.click();
     URL.revokeObjectURL(url);
   };
+  
+  // Export using API endpoint
+  const exportCSVFromAPI = async (type: 'events' | 'users') => {
+    try {
+      const blob = await api.exportAnalyticsCSV(type, rangeStart, rangeEnd);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `analytics-${type}-${format(new Date(), 'yyyy-MM-dd')}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      
+      toast({
+        title: "Export Successful",
+        description: `Analytics ${type} data exported successfully`,
+      });
+    } catch (error) {
+      console.error('Export failed:', error);
+      toast({
+        title: "Export Failed",
+        description: "Failed to export analytics data. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
 
   if (eventsLoading) {
     return (
@@ -506,6 +559,14 @@ export default function AnalyticsDashboard() {
           Analytics & Reporting
         </h2>
         <div className="flex items-center space-x-3">
+          {/* Real-time connection status */}
+          <div className="flex items-center space-x-2">
+            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
+            <span className="text-sm text-muted-foreground">
+              {isConnected ? 'Live' : 'Offline'}
+            </span>
+          </div>
+          
           <Select value={dateRange} onValueChange={setDateRange}>
             <SelectTrigger className="w-40" data-testid="select-date-range">
               <SelectValue placeholder="Date Range" />
