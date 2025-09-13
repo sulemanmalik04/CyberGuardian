@@ -36,7 +36,7 @@ const userEditSchema = z.object({
   department: z.string().optional(),
   language: z.string().min(1, 'Language is required'),
   isActive: z.boolean(),
-  passwordHash: z.string().optional().refine((val) => !val || val.length >= 8, {
+  password: z.string().optional().refine((val) => !val || val.length >= 8, {
     message: 'Password must be at least 8 characters long if provided'
   })
 });
@@ -66,7 +66,7 @@ export default function UserEditDialog({ user, isOpen, onClose, mode }: UserEdit
       department: '',
       language: 'en',
       isActive: true,
-      passwordHash: ''
+      password: ''
     }
   });
 
@@ -80,7 +80,7 @@ export default function UserEditDialog({ user, isOpen, onClose, mode }: UserEdit
         department: user.department || '',
         language: user.language,
         isActive: user.isActive,
-        passwordHash: ''
+        password: ''
       });
     } else if (mode === 'create') {
       form.reset({
@@ -91,19 +91,19 @@ export default function UserEditDialog({ user, isOpen, onClose, mode }: UserEdit
         department: '',
         language: 'en',
         isActive: true,
-        passwordHash: ''
+        password: ''
       });
     }
   }, [user, mode, form]);
 
   const createMutation = useMutation({
     mutationFn: (userData: UserEditFormData) => {
-      const { passwordHash, ...otherData } = userData;
       return api.createUser({
-        ...otherData,
-        passwordHash: passwordHash || 'TempPass123!', // Default password for new users
+        ...userData,
+        // SECURITY FIX: Send 'password' field (plaintext) - backend will hash it properly
+        // If no password provided, backend will generate a strong random password
         clientId: currentUser?.role === 'client_admin' ? currentUser.clientId : undefined
-      });
+      } as any);
     },
     onSuccess: () => {
       toast({
@@ -126,10 +126,11 @@ export default function UserEditDialog({ user, isOpen, onClose, mode }: UserEdit
   const updateMutation = useMutation({
     mutationFn: (userData: UserEditFormData) => {
       if (!user) throw new Error('No user selected');
-      const { passwordHash, ...otherData } = userData;
-      const updateData: any = otherData;
-      if (passwordHash && passwordHash.trim()) {
-        updateData.passwordHash = passwordHash;
+      // SECURITY FIX: Send 'password' field directly - backend will hash it properly
+      // Only send password if it's provided and not empty
+      const updateData: any = { ...userData };
+      if (!updateData.password || !updateData.password.trim()) {
+        delete updateData.password; // Don't send empty password to backend
       }
       return api.updateUser(user.id, updateData);
     },
@@ -309,7 +310,7 @@ export default function UserEditDialog({ user, isOpen, onClose, mode }: UserEdit
 
             <FormField
               control={form.control}
-              name="passwordHash"
+              name="password"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>

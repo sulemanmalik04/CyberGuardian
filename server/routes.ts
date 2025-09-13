@@ -810,11 +810,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // SECURITY: Ensure user is created for the correct client
       validatedUserData.clientId = authReq.validatedClientId!;
       
-      // Hash password
-      const hashedPassword = await bcrypt.hash(validatedUserData.passwordHash, 12);
+      // SECURITY FIX: Generate strong password if none provided, then hash properly
+      let passwordToHash: string;
+      if (validatedUserData.password && validatedUserData.password.trim()) {
+        // Use provided password
+        passwordToHash = validatedUserData.password.trim();
+      } else {
+        // Generate strong random password using Node.js crypto.randomBytes()
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=[]{}|;:,.<>?';
+        const randomBytes = crypto.randomBytes(20);
+        passwordToHash = Array.from(randomBytes)
+          .map(x => chars[x % chars.length])
+          .join('');
+      }
+      
+      // Hash the password securely
+      const hashedPassword = await bcrypt.hash(passwordToHash, 12);
+      
+      // Remove the password field before storing (we only store passwordHash)
+      const { password, ...userDataForStorage } = validatedUserData;
       
       const user = await storage.createUser({
-        ...validatedUserData,
+        ...userDataForStorage,
         passwordHash: hashedPassword
       });
       
@@ -1168,10 +1185,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Access denied - cannot update users from other clients' });
       }
 
-      // Hash password if it's being updated
-      if (updates.passwordHash) {
-        updates.passwordHash = await bcrypt.hash(updates.passwordHash, 12);
+      // SECURITY FIX: Hash password properly if it's being updated
+      if (updates.password && updates.password.trim()) {
+        // Hash the plaintext password provided by frontend
+        updates.passwordHash = await bcrypt.hash(updates.password.trim(), 12);
+        // Remove the plaintext password field before storage
+        delete updates.password;
       }
+      // SECURITY: REMOVED dangerous double-hashing legacy path
+      // Never accept passwordHash from frontend to prevent double-hashing attacks
 
       // Validate role changes
       if (updates.role) {

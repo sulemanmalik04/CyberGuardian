@@ -234,11 +234,22 @@ export const sessionsRelations = relations(sessions, ({ one }) => ({
   }),
 }));
 
-// Insert schemas
+// Insert schemas - separate API schemas from DB schemas for proper validation
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+  passwordHash: true // Remove passwordHash from API schema - only backend should handle this
+}).extend({
+  // SECURITY: Add password field for API - this will be hashed before storage
+  password: z.string().min(8, "Password must be at least 8 characters").optional()
+});
+
+// Internal user creation schema for database operations (backend only)
+export const insertUserDbSchema = createInsertSchema(users).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true
 });
 
 export const insertClientSchema = createInsertSchema(clients).omit({
